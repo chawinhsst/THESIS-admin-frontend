@@ -1,11 +1,22 @@
-// admin-frontend/src/pages/VolunteerListPage.jsx
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
 import VolunteerDetailModal from '../components/VolunteerDetailModal';
 import { useLocation } from 'react-router-dom';
 import { 
-    FiUsers, FiCheckSquare, FiXSquare, FiGrid, FiEdit, FiTrash2, 
-    FiInbox, FiAlertCircle, FiSearch, FiChevronUp, FiChevronDown, FiMail, FiCalendar 
+    FiUsers, // Added FiUsers back for the 'All' tab
+    FiCheckCircle, 
+    FiXCircle, 
+    FiGrid, 
+    FiClock, // Import FiClock for the 'Pending' tab
+    FiEdit, 
+    FiTrash2, 
+    FiInbox, 
+    FiAlertCircle, 
+    FiSearch, 
+    FiChevronUp, 
+    FiChevronDown, 
+    FiMail, 
+    FiCalendar 
 } from 'react-icons/fi';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000';
@@ -54,8 +65,10 @@ export default function VolunteerListPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [sortConfig, setSortConfig] = useState({ key: 'registration_date', direction: 'descending' });
   const [currentPage, setCurrentPage] = useState(1);
-  
   const [selectedVolunteer, setSelectedVolunteer] = useState(null);
+
+  const [sliderStyle, setSliderStyle] = useState({});
+  const tabsRef = useRef(new Map());
 
   useEffect(() => {
     const fetchVolunteers = async () => {
@@ -70,6 +83,16 @@ export default function VolunteerListPage() {
     };
     fetchVolunteers();
   }, [authToken]);
+
+  useEffect(() => {
+    const activeTabNode = tabsRef.current.get(activeStatus);
+    if (activeTabNode) {
+      setSliderStyle({
+        left: activeTabNode.offsetLeft,
+        width: activeTabNode.offsetWidth,
+      });
+    }
+  }, [activeStatus, allVolunteers]);
 
   const processedVolunteers = useMemo(() => {
     let filtered = [...allVolunteers];
@@ -113,8 +136,11 @@ export default function VolunteerListPage() {
   };
   
   const statusTabs = [
-    { name: 'All', value: 'all', icon: FiGrid }, { name: 'Pending', value: 'pending', icon: FiUsers },
-    { name: 'Approved', value: 'approved', icon: FiCheckSquare }, { name: 'Rejected', value: 'rejected', icon: FiXSquare },
+    // THIS ICON IS NOW CORRECTED
+    { name: 'All', value: 'all', icon: FiUsers }, 
+    { name: 'Pending', value: 'pending', icon: FiClock }, 
+    { name: 'Approved', value: 'approved', icon: FiCheckCircle }, 
+    { name: 'Rejected', value: 'rejected', icon: FiXCircle },
   ];
 
   return (
@@ -132,12 +158,24 @@ export default function VolunteerListPage() {
             </div>
           </div>
 
-          <div className="mt-6 mb-6">
-            <div className="p-1.5 inline-flex items-center gap-x-2 bg-slate-200/60 rounded-lg overflow-x-auto">
+          <div className="mt-8 mb-6">
+            <div className="relative inline-flex items-center bg-slate-200/60 rounded-lg p-1.5">
+              <span
+                className="absolute left-0 top-0 bottom-0 z-0 h-full rounded-md bg-white shadow-sm transition-all duration-300 ease-in-out"
+                style={sliderStyle}
+              />
               {statusTabs.map((tab) => (
-                <button key={tab.name} onClick={() => { setActiveStatus(tab.value); setCurrentPage(1); }}
-                  className={`flex items-center gap-x-2 whitespace-nowrap py-2 px-4 rounded-md text-sm font-semibold transition-all ${activeStatus === tab.value ? 'bg-white text-sky-600 shadow-sm' : 'text-slate-600 hover:bg-white/60 hover:text-sky-600'}`}>
-                  <tab.icon className="h-5 w-5" /> {tab.name}
+                <button
+                  key={tab.value}
+                  ref={(node) => { if (node) tabsRef.current.set(tab.value, node); }}
+                  onClick={() => { setActiveStatus(tab.value); setCurrentPage(1); }}
+                  className={`relative z-10 flex items-center justify-center whitespace-nowrap rounded-md py-2 text-sm font-semibold transition-colors duration-300 px-3 sm:px-4 ${
+                    activeStatus === tab.value ? 'text-sky-600' : 'text-slate-600 hover:text-sky-600'
+                  }`}
+                  title={tab.name}
+                >
+                  <tab.icon className="h-5 w-5" />
+                  <span className="hidden sm:inline ml-2">{tab.name}</span>
                 </button>
               ))}
             </div>
@@ -149,7 +187,7 @@ export default function VolunteerListPage() {
               {isLoading ? Array.from({ length: 5 }).map((_, i) => (
                   <div key={i} className="p-4 animate-pulse"><div className="h-16 w-full rounded-md bg-slate-200"></div></div>
               )) : paginatedVolunteers.length > 0 ? paginatedVolunteers.map((v) => (
-                <div key={v.id} className="p-4 text-sm"> {/* FIXED: Standardized base font size */}
+                <div key={v.id} className="p-4 text-sm">
                   <div className="flex items-center justify-between">
                     <p className="font-semibold text-slate-800">{v.first_name} {v.last_name}</p>
                     <StatusBadge status={v.status} />
@@ -169,7 +207,7 @@ export default function VolunteerListPage() {
             </div>
 
             {/* Desktop Table View */}
-            <table className="min-w-full hidden md:table">
+            <table className="w-full hidden md:table">
               <thead className="bg-slate-100">
                 <tr>
                   <SortableHeader name="last_name" sortConfig={sortConfig} onSort={handleSort}>Name</SortableHeader>
