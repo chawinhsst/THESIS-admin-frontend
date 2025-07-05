@@ -9,31 +9,35 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000
 
 // --- Reusable Components ---
 
-const KpiCard = ({ title, value, icon: Icon, color }) => (
-  <div className="rounded-xl border bg-white p-6 shadow-sm transition-all hover:shadow-md">
+const KpiCard = ({ title, value, icon: Icon, color, status }) => (
+  <Link 
+    to="/volunteers" 
+    state={{ defaultStatus: status }} 
+    className="block rounded-xl border bg-white p-6 shadow-sm transition-all hover:shadow-lg hover:-translate-y-1"
+  >
     <div className="flex items-center justify-between">
-      <h3 className="text-sm font-medium text-slate-600">{title}</h3>
+      {/* FIXED: Standardized title size to match other widgets */}
+      <h3 className="text-base font-semibold text-slate-800">{title}</h3>
       <Icon className={`h-6 w-6 ${color}`} />
     </div>
     <p className="mt-2 text-3xl font-bold text-slate-900">{value}</p>
-  </div>
+  </Link>
 );
 
 const SkeletonCard = () => (
   <div className="rounded-xl border bg-white p-6 shadow-sm animate-pulse">
-    <div className="h-4 w-1/2 rounded bg-slate-200"></div>
+    <div className="h-4 w-3/4 rounded bg-slate-200"></div>
     <div className="mt-4 h-8 w-1/4 rounded bg-slate-200"></div>
   </div>
 );
 
-// --- New Components for Enhanced Dashboard ---
+// --- Dashboard Sub-Components ---
 
 const RecentRegistrations = ({ volunteers, isLoading }) => (
   <div className="rounded-xl border bg-white p-6 shadow-sm">
     <h3 className="text-base font-semibold text-slate-800">Recent Registrations</h3>
     <div className="mt-4 space-y-4">
       {isLoading ? (
-        // Skeleton for recent list
         Array.from({ length: 5 }).map((_, i) => (
           <div key={i} className="flex items-center gap-4 animate-pulse">
             <div className="h-10 w-10 rounded-full bg-slate-200"></div>
@@ -44,7 +48,6 @@ const RecentRegistrations = ({ volunteers, isLoading }) => (
           </div>
         ))
       ) : (
-        // Actual list content
         volunteers.slice(0, 5).map(v => (
           <div key={v.id} className="flex items-center gap-4">
             <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 font-bold text-slate-600">
@@ -68,35 +71,29 @@ const RecentRegistrations = ({ volunteers, isLoading }) => (
 const PlatformChart = ({ volunteers, isLoading }) => {
     const processData = () => {
         if (!volunteers || volunteers.length === 0) return [];
-
         const counts = volunteers.reduce((acc, v) => {
             const platform = v.platform || "Unknown";
             acc[platform] = (acc[platform] || 0) + 1;
             return acc;
         }, {});
-
-        return Object.entries(counts)
-            .map(([name, count]) => ({ name, count }))
-            .sort((a, b) => b.count - a.count);
+        return Object.entries(counts).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count);
     };
 
     return (
         <div className="rounded-xl border bg-white p-6 shadow-sm col-span-1 lg:col-span-2">
             <h3 className="text-base font-semibold text-slate-800">Platform Distribution</h3>
             <div className="mt-4 h-80">
-                {isLoading ? (
-                    <div className="h-full w-full animate-pulse rounded-md bg-slate-200"></div>
-                ) : (
+                {isLoading ? <div className="h-full w-full animate-pulse rounded-md bg-slate-200"></div> :
                     <ResponsiveContainer width="100%" height="100%">
                         <BarChart data={processData()} margin={{ top: 5, right: 20, left: -10, bottom: 5 }}>
                             <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                            <XAxis dataKey="name" tick={{ fontSize: 12 }} />
+                            <XAxis dataKey="name" tick={{ fontSize: 12 }} angle={-25} textAnchor="end" height={60} />
                             <YAxis allowDecimals={false} tick={{ fontSize: 12 }} />
                             <Tooltip cursor={{ fill: 'rgba(241, 245, 249, 0.5)' }} contentStyle={{ backgroundColor: '#fff', border: '1px solid #e2e8f0', borderRadius: '0.5rem' }} />
                             <Bar dataKey="count" fill="#0ea5e9" radius={[4, 4, 0, 0]} />
                         </BarChart>
                     </ResponsiveContainer>
-                )}
+                }
             </div>
         </div>
     );
@@ -120,22 +117,15 @@ export default function DashboardPage() {
         });
         if (!response.ok) throw new Error('Failed to fetch volunteer data.');
         const data = await response.json();
-        
         const sortedData = data.sort((a, b) => new Date(b.registration_date) - new Date(a.registration_date));
         setAllVolunteers(sortedData);
-        
         setStats({
           total: data.length,
           pending: data.filter(v => v.status === 'pending').length,
           approved: data.filter(v => v.status === 'approved').length,
           rejected: data.filter(v => v.status === 'rejected').length,
         });
-
-      } catch (err) {
-        console.error(err.message);
-      } finally {
-        setIsLoading(false);
-      }
+      } catch (err) { console.error(err.message); } finally { setIsLoading(false); }
     };
     fetchVolunteers();
   }, [authToken]);
@@ -144,21 +134,17 @@ export default function DashboardPage() {
     <main className="flex-1 bg-slate-50 p-4 sm:p-6 lg:p-8">
       <h1 className="text-3xl font-bold text-slate-900 tracking-tight">Dashboard</h1>
       
-      {/* KPI Cards */}
       <div className="mt-6 grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        {isLoading ? (
-            Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)
-        ) : (
+        {isLoading ? Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />) :
             <>
-                <KpiCard title="Total Volunteers" value={stats.total} icon={FiUsers} color="text-sky-500" />
-                <KpiCard title="Pending Approval" value={stats.pending} icon={FiClock} color="text-amber-500" />
-                <KpiCard title="Approved Volunteers" value={stats.approved} icon={FiCheckCircle} color="text-emerald-500" />
-                <KpiCard title="Rejected Applicants" value={stats.rejected} icon={FiXCircle} color="text-rose-500" />
+                <KpiCard title="Total Volunteers" value={stats.total} icon={FiUsers} color="text-sky-500" status="all" />
+                <KpiCard title="Pending Approval" value={stats.pending} icon={FiClock} color="text-amber-500" status="pending" />
+                <KpiCard title="Approved Volunteers" value={stats.approved} icon={FiCheckCircle} color="text-emerald-500" status="approved" />
+                <KpiCard title="Rejected Applicants" value={stats.rejected} icon={FiXCircle} color="text-rose-500" status="rejected" />
             </>
-        )}
+        }
       </div>
       
-      {/* New Dashboard Sections */}
       <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-3">
           <PlatformChart volunteers={allVolunteers} isLoading={isLoading} />
           <RecentRegistrations volunteers={allVolunteers} isLoading={isLoading} />
