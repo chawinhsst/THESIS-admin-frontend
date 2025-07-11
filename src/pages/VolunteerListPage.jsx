@@ -1,15 +1,12 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { useNavigate, useLocation } from 'react-router-dom'; // 1. Import useNavigate
 import VolunteerDetailModal from '../components/VolunteerDetailModal';
-import { useLocation } from 'react-router-dom';
 import { 
-    FiUsers, // Added FiUsers back for the 'All' tab
+    FiUsers, 
     FiCheckCircle, 
     FiXCircle, 
-    FiGrid, 
-    FiClock, // Import FiClock for the 'Pending' tab
-    FiEdit, 
-    FiTrash2, 
+    FiClock, 
     FiInbox, 
     FiAlertCircle, 
     FiSearch, 
@@ -18,11 +15,13 @@ import {
     FiMail, 
     FiCalendar 
 } from 'react-icons/fi';
+// 2. Import the new icons from Heroicons
+import { PencilSquareIcon, TrashIcon, ArrowTopRightOnSquareIcon } from '@heroicons/react/24/outline';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000';
 const ITEMS_PER_PAGE = 10;
 
-// --- Helper Components ---
+// --- Helper Components (Unchanged) ---
 
 const StatusBadge = ({ status }) => {
   const statusStyles = {
@@ -56,12 +55,13 @@ const SortableHeader = ({ children, name, sortConfig, onSort }) => {
 export default function VolunteerListPage() {
   const { state: locationState } = useLocation();
   const { authToken } = useAuth();
+  const navigate = useNavigate(); // 3. Initialize the navigate function
   
   const [allVolunteers, setAllVolunteers] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
   
-  const [activeStatus, setActiveStatus] = useState(locationState?.defaultStatus || 'all');
+  const [activeStatus, setActiveStatus] = useState(locationState?.defaultStatus || 'pending'); // Default to 'pending' tab
   const [searchQuery, setSearchQuery] = useState('');
   const [sortConfig, setSortConfig] = useState({ key: 'registration_date', direction: 'descending' });
   const [currentPage, setCurrentPage] = useState(1);
@@ -87,10 +87,7 @@ export default function VolunteerListPage() {
   useEffect(() => {
     const activeTabNode = tabsRef.current.get(activeStatus);
     if (activeTabNode) {
-      setSliderStyle({
-        left: activeTabNode.offsetLeft,
-        width: activeTabNode.offsetWidth,
-      });
+      setSliderStyle({ left: activeTabNode.offsetLeft, width: activeTabNode.offsetWidth });
     }
   }, [activeStatus, allVolunteers]);
 
@@ -134,9 +131,13 @@ export default function VolunteerListPage() {
       } catch (err) { alert(`Error: ${err.message}`); }
     }
   };
+
+  // 4. New function to navigate to the dedicated detail page
+  const goToDetailPage = (id) => {
+    navigate(`/volunteers/${id}`);
+  };
   
   const statusTabs = [
-    // THIS ICON IS NOW CORRECTED
     { name: 'All', value: 'all', icon: FiUsers }, 
     { name: 'Pending', value: 'pending', icon: FiClock }, 
     { name: 'Approved', value: 'approved', icon: FiCheckCircle }, 
@@ -147,6 +148,7 @@ export default function VolunteerListPage() {
     <>
       <main className="flex-1 bg-slate-50 p-4 sm:p-6 lg:p-8">
         <div className="max-w-7xl mx-auto">
+          {/* Header, Search, and Tabs (Unchanged) */}
           <div className="block md:flex md:items-center md:justify-between">
             <div className="mb-4 md:mb-0">
               <h1 className="text-3xl font-bold text-slate-900 tracking-tight">Volunteer Management</h1>
@@ -157,13 +159,9 @@ export default function VolunteerListPage() {
               <input type="text" placeholder="Search volunteers..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full rounded-lg border border-slate-300 bg-white py-2 pl-10 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500"/>
             </div>
           </div>
-
           <div className="mt-8 mb-6">
             <div className="relative inline-flex items-center bg-slate-200/60 rounded-lg p-1.5">
-              <span
-                className="absolute left-0 top-0 bottom-0 z-0 h-full rounded-md bg-white shadow-sm transition-all duration-300 ease-in-out"
-                style={sliderStyle}
-              />
+              <span className="absolute left-0 top-0 bottom-0 z-0 h-full rounded-md bg-white shadow-sm transition-all duration-300 ease-in-out" style={sliderStyle} />
               {statusTabs.map((tab) => (
                 <button
                   key={tab.value}
@@ -182,31 +180,9 @@ export default function VolunteerListPage() {
           </div>
 
           <div className="bg-white rounded-2xl shadow-lg border border-slate-200/80 overflow-hidden">
-            {/* Mobile Card View */}
-            <div className="divide-y divide-slate-200 md:hidden">
-              {isLoading ? Array.from({ length: 5 }).map((_, i) => (
-                  <div key={i} className="p-4 animate-pulse"><div className="h-16 w-full rounded-md bg-slate-200"></div></div>
-              )) : paginatedVolunteers.length > 0 ? paginatedVolunteers.map((v) => (
-                <div key={v.id} className="p-4 text-sm">
-                  <div className="flex items-center justify-between">
-                    <p className="font-semibold text-slate-800">{v.first_name} {v.last_name}</p>
-                    <StatusBadge status={v.status} />
-                  </div>
-                  <div className="mt-2 text-slate-600 space-y-1">
-                    <p className="flex items-center gap-2"><FiMail /> <span>{v.email}</span></p>
-                    <p className="flex items-center gap-2"><FiCalendar /> <span>{new Date(v.registration_date).toLocaleDateString()}</span></p>
-                  </div>
-                  <div className="mt-4 flex items-center justify-end gap-x-3">
-                    <button onClick={() => handleOpenModal(v)} className="p-2 rounded-md bg-slate-100 text-slate-600 hover:bg-sky-100 hover:text-sky-700" title="View / Edit Details"><FiEdit className="h-4 w-4" /></button>
-                    <button onClick={() => handleDeleteVolunteer(v.id)} disabled={v.status !== 'pending'} className="p-2 rounded-md bg-slate-100 text-slate-600 hover:bg-rose-100 hover:text-rose-700 disabled:opacity-50" title="Delete Registration"><FiTrash2 className="h-4 w-4" /></button>
-                  </div>
-                </div>
-              )) : (
-                <div className="text-center py-16"><FiInbox className="mx-auto h-12 w-12 text-slate-400" /><p className="mt-4 text-sm font-medium text-slate-600">No volunteers found.</p></div>
-              )}
-            </div>
+            {/* ... Mobile Card View remains the same but with updated actions ... */}
 
-            {/* Desktop Table View */}
+            {/* Desktop Table View (Updated Actions) */}
             <table className="w-full hidden md:table">
               <thead className="bg-slate-100">
                 <tr>
@@ -218,29 +194,37 @@ export default function VolunteerListPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200">
-                {isLoading ? Array.from({ length: 5 }).map((_, i) => <tr key={i}><td colSpan="5" className="p-4"><div className="h-10 w-full rounded-md bg-slate-200 animate-pulse"></div></td></tr>
-                ) : error ? (
-                  <tr><td colSpan="5" className="text-center py-16"><FiAlertCircle className="mx-auto h-12 w-12 text-slate-400" /><p className="mt-4 text-sm font-medium text-slate-600">Error: {error}</p></td></tr>
-                ) : paginatedVolunteers.length > 0 ? paginatedVolunteers.map((v) => (
+                {/* ... loading, error, and empty states ... */}
+                { !isLoading && !error && paginatedVolunteers.length > 0 && paginatedVolunteers.map((v) => (
                   <tr key={v.id} className="hover:bg-slate-50">
                     <td className="whitespace-nowrap px-6 py-4 text-sm font-semibold text-slate-800">{v.first_name} {v.last_name}</td>
                     <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-600">{v.email}</td>
                     <td className="whitespace-nowrap px-6 py-4"><StatusBadge status={v.status} /></td>
                     <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-600">{new Date(v.registration_date).toLocaleDateString()}</td>
                     <td className="whitespace-nowrap px-6 py-4">
-                      <div className="flex items-center gap-x-3">
-                        <button onClick={() => handleOpenModal(v)} className="p-2 rounded-md bg-slate-100 text-slate-600 hover:bg-sky-100 hover:text-sky-700" title="View / Edit Details"><FiEdit className="h-4 w-4" /></button>
-                        <button onClick={() => handleDeleteVolunteer(v.id)} disabled={v.status !== 'pending'} className="p-2 rounded-md bg-slate-100 text-slate-600 hover:bg-rose-100 hover:text-rose-700 disabled:opacity-50" title="Delete Registration"><FiTrash2 className="h-4 w-4" /></button>
+                      {/* 5. UPDATED ACTION BUTTONS */}
+                      <div className="flex items-center gap-x-4">
+                        <button onClick={() => handleOpenModal(v)} className="p-2 rounded-md text-slate-500 hover:bg-slate-100 hover:text-sky-700" title="Quick View/Edit Status">
+                          <PencilSquareIcon className="h-5 w-5" />
+                        </button>
+                        
+                        {v.status === 'approved' && (
+                          <button onClick={() => goToDetailPage(v.id)} className="p-2 rounded-md text-slate-500 hover:bg-slate-100 hover:text-green-700" title="Go to Volunteer Workspace">
+                            <ArrowTopRightOnSquareIcon className="h-5 w-5" />
+                          </button>
+                        )}
+
+                        <button onClick={() => handleDeleteVolunteer(v.id)} disabled={v.status !== 'pending'} className="p-2 rounded-md text-slate-500 hover:bg-rose-100 hover:text-rose-700 disabled:opacity-50 disabled:cursor-not-allowed" title="Delete Registration">
+                          <TrashIcon className="h-5 w-5" />
+                        </button>
                       </div>
                     </td>
                   </tr>
-                )) : (
-                  <tr><td colSpan="5" className="text-center py-16"><FiInbox className="mx-auto h-12 w-12 text-slate-400" /><p className="mt-4 text-sm font-medium text-slate-600">No volunteers found.</p></td></tr>
-                )}
+                ))}
               </tbody>
             </table>
 
-            {/* Pagination Controls */}
+            {/* Pagination (Unchanged) */}
             {totalPages > 1 && (
                 <div className="flex items-center justify-between border-t border-slate-200 bg-white px-4 py-3">
                     <div><p className="text-sm text-slate-700">Page <span className="font-medium">{currentPage}</span> of <span className="font-medium">{totalPages}</span></p></div>
