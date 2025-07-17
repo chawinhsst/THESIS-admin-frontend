@@ -4,7 +4,11 @@ import ProtectedRoute from './components/ProtectedRoute';
 import LoginPage from './pages/LoginPage';
 import DashboardPage from './pages/DashboardPage';
 import VolunteerListPage from './pages/VolunteerListPage';
-import VolunteerDetailPage from './pages/VolunteerDetailPage'; // 1. Import the detail page
+import VolunteerDetailPage from './pages/VolunteerDetailPage';
+// --- Add these imports for the new page ---
+import SessionDetailPage, { loader as sessionDetailLoader } from './pages/SessionDetailPage';
+import SessionNotFound from './components/SessionNotFound';
+
 
 const router = createBrowserRouter([
   {
@@ -27,10 +31,16 @@ const router = createBrowserRouter([
             path: 'volunteers',
             element: <VolunteerListPage />,
           },
-          // 2. ADD THIS NEW ROUTE for individual volunteers
           {
             path: 'volunteers/:volunteerId',
             element: <VolunteerDetailPage />,
+          },
+          // --- This is the new route for the session detail page ---
+          {
+            path: 'sessions/:sessionId',
+            element: <SessionDetailPage />,
+            loader: sessionDetailLoader,
+            errorElement: <SessionNotFound />,
           },
         ],
       },

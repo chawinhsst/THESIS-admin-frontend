@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { 
     UserIcon, 
@@ -11,7 +11,9 @@ import {
     TagIcon,
     TrashIcon,
     ExclamationTriangleIcon,
-    PencilSquareIcon
+    PencilSquareIcon,
+    ArrowDownTrayIcon,
+    ArrowTopRightOnSquareIcon
 } from '@heroicons/react/24/outline';
 import VolunteerDetailModal from '../components/VolunteerDetailModal';
 
@@ -28,7 +30,6 @@ const SkeletonCard = ({ lines = 3 }) => (
   </div>
 );
 
-// This is the direct fix for the text overflow issue.
 const InfoItem = ({ icon, label, value }) => (
     <div className="flex items-start">
         <div className="flex-shrink-0 w-6 pt-1 text-slate-400">{icon}</div>
@@ -51,7 +52,6 @@ const VolunteerSummaryCard = ({ volunteer, onEdit }) => {
                     Edit
                 </button>
             </div>
-            {/* THIS IS THE NEW, MORE ROBUST LAYOUT */}
             <div className="mt-4 border-t pt-4 space-y-4">
                 <InfoItem icon={<UserIcon className="w-5 h-5" />} label="Full Name" value={`${volunteer.first_name} ${volunteer.last_name}`} />
                 <InfoItem icon={<EnvelopeIcon className="w-5 h-5" />} label="Email" value={volunteer.email} />
@@ -120,32 +120,99 @@ const SessionUploader = ({ volunteerId, onUploadSuccess }) => {
   );
 };
 
+
+// --- Enhanced Session List Item Component ---
 const SessionListItem = ({ session, onLabelChange, onDelete }) => {
   const [currentLabel, setCurrentLabel] = useState(session.admin_label || 'Normal');
+  const [isSavingLabel, setIsSavingLabel] = useState(false);
   const { authToken } = useAuth();
+  const navigate = useNavigate();
   
   const predictionColor = session.ml_prediction === 'Anomaly' ? 'text-red-500' : 'text-green-600';
 
-  const handleLabelUpdate = async (newLabel) => {
-    setCurrentLabel(newLabel);
+  const handleSaveLabel = async () => {
+    setIsSavingLabel(true);
     try {
-      await fetch(`${API_BASE_URL}/api/sessions/${session.id}/`, {
+      // 1. Await the fetch call and store the server's response
+      const response = await fetch(`${API_BASE_URL}/api/sessions/${session.id}/`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Token ${authToken}` },
-        body: JSON.stringify({ admin_label: newLabel })
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Token ${authToken}`
+        },
+        body: JSON.stringify({ admin_label: currentLabel })
       });
-      onLabelChange(session.id, newLabel);
-    } catch (error) { alert("Failed to save label."); }
+
+      // 2. CRITICAL CHECK: If the response is NOT okay, throw an error
+      if (!response.ok) {
+        // This forces the code to jump to the 'catch' block below
+        throw new Error(`Server returned an error: ${response.status}`);
+      }
+
+      // 3. This success code now ONLY runs if the check above passes
+      onLabelChange(session.id, currentLabel);
+      alert("Label saved successfully!");
+
+    } catch (error) {
+      // The 'catch' block will now correctly handle server errors
+      console.error("Failed to save label:", error);
+      alert("Failed to save the label. The server responded with an error.");
+      setCurrentLabel(session.admin_label || 'Normal');
+    } finally {
+      setIsSavingLabel(false);
+    }
+  };
+  
+  const handleDownload = () => {
+    if (!session.timeseries_data || session.timeseries_data.length === 0) {
+      alert("No time-series data available to download for this session.");
+      return;
+    }
+    const dataToExport = session.timeseries_data.map(row => ({
+      ...row,
+      admin_label: currentLabel
+    }));
+    const headers = Object.keys(dataToExport[0]);
+    const csvRows = [
+      headers.join(','),
+      ...dataToExport.map(row => 
+        headers.map(fieldName => JSON.stringify(row[fieldName], (key, value) => value === null ? '' : value)).join(',')
+      )
+    ];
+    const blob = new Blob([csvRows.join('\n')], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', `session_${session.id}_labeled_data.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
   return (
     <div className="border border-gray-200 rounded-xl p-4 bg-white hover:shadow-lg transition-shadow duration-300">
       <div className="flex flex-wrap justify-between items-start gap-2 mb-3">
         <div>
-          <p className="font-bold text-gray-800 flex items-center gap-2"><CalendarIcon className="w-5 h-5 text-gray-400" /> {new Date(session.session_date).toLocaleString()}</p>
-          <p className="text-xs text-gray-500 ml-7">Source: {session.source_type}</p>
+          <p className="font-bold text-gray-800 flex items-center gap-2">
+            <CalendarIcon className="w-5 h-5 text-gray-400" /> 
+            Run Date: {new Date(session.session_date).toLocaleString()}
+          </p>
+          <p className="text-xs text-gray-500 ml-7">
+            Uploaded: {new Date(session.uploaded_at).toLocaleDateString()}
+          </p>
         </div>
-        <button onClick={() => onDelete(session.id)} className="p-1.5 rounded-md hover:bg-red-100 text-gray-400 hover:text-red-600" title="Delete Session"><TrashIcon className="w-4 h-4" /></button>
+        <div className="flex items-center space-x-1">
+            <button onClick={() => navigate(`/sessions/${session.id}`)} className="p-1.5 rounded-md hover:bg-sky-100 text-gray-400 hover:text-sky-600" title="Go to Session Detail Page">
+                <ArrowTopRightOnSquareIcon className="w-4 h-4" />
+            </button>
+            <button onClick={handleDownload} className="p-1.5 rounded-md hover:bg-blue-100 text-gray-400 hover:text-blue-600" title="Download Labeled CSV">
+                <ArrowDownTrayIcon className="w-4 h-4" />
+            </button>
+            <button onClick={() => onDelete(session.id)} className="p-1.5 rounded-md hover:bg-red-100 text-gray-400 hover:text-red-600" title="Delete Session">
+                <TrashIcon className="w-4 h-4" />
+            </button>
+        </div>
       </div>
       <div className="bg-slate-50 rounded-md p-3 mt-3 grid grid-cols-1 md:grid-cols-2 gap-4 items-center">
         <div className="flex items-center">
@@ -153,17 +220,16 @@ const SessionListItem = ({ session, onLabelChange, onDelete }) => {
           <div>
             <p className="text-xs font-medium text-gray-500">ML PREDICTION</p>
             <p className={`font-bold ${predictionColor}`}>{session.ml_prediction || 'Not Processed'}</p>
-            {session.ml_confidence && <p className="text-xs text-gray-500">Confidence: {session.ml_confidence}%</p>}
+            {session.ml_confidence != null && <p className="text-xs text-gray-500">Confidence: {session.ml_confidence}%</p>}
           </div>
         </div>
-        <div className="flex items-center">
-          <TagIcon className="mr-3 h-6 w-6 text-gray-500 flex-shrink-0" />
-          <div>
-            <label htmlFor={`label-${session.id}`} className="text-xs font-medium text-gray-500">ADMIN LABEL</label>
+        <div className="flex items-center space-x-2">
+          <div className="flex-grow">
+            <label htmlFor={`label-${session.id}`} className="text-xs font-medium text-gray-500 flex items-center"><TagIcon className="mr-1 h-4 w-4" />ADMIN LABEL</label>
             <select
               id={`label-${session.id}`}
               value={currentLabel}
-              onChange={(e) => handleLabelUpdate(e.target.value)}
+              onChange={(e) => setCurrentLabel(e.target.value)}
               className="mt-1 block w-full rounded-md border-gray-300 shadow-sm text-sm focus:ring-sky-500 focus:border-sky-500"
             >
               <option>Normal</option>
@@ -171,6 +237,13 @@ const SessionListItem = ({ session, onLabelChange, onDelete }) => {
               <option>Arrhythmic Anomaly</option>
             </select>
           </div>
+          <button 
+            onClick={handleSaveLabel} 
+            disabled={isSavingLabel || currentLabel === (session.admin_label || 'Normal')}
+            className="self-end rounded-md bg-sky-600 px-3 py-2 text-xs font-semibold text-white shadow-sm hover:bg-sky-700 disabled:bg-slate-400 disabled:cursor-not-allowed"
+          >
+            {isSavingLabel ? '...' : 'Save'}
+          </button>
         </div>
       </div>
     </div>
