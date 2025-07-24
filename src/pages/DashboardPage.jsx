@@ -1,13 +1,16 @@
-// admin-frontend/src/pages/DashboardPage.jsx
 import { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { FiUsers, FiClock, FiCheckCircle, FiXCircle, FiArrowRight } from 'react-icons/fi';
 import { Link } from 'react-router-dom';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { 
+    UsersIcon, 
+    ClockIcon, 
+    CheckCircleIcon, 
+    XCircleIcon, 
+    ArrowRightIcon 
+} from '@heroicons/react/24/outline';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000';
-
-// --- Reusable Components ---
 
 const KpiCard = ({ title, value, icon: Icon, color, status }) => (
   <Link 
@@ -16,7 +19,6 @@ const KpiCard = ({ title, value, icon: Icon, color, status }) => (
     className="block rounded-xl border bg-white p-6 shadow-sm transition-all hover:shadow-lg hover:-translate-y-1"
   >
     <div className="flex items-center justify-between">
-      {/* FIXED: Standardized title size to match other widgets */}
       <h3 className="text-base font-semibold text-slate-800">{title}</h3>
       <Icon className={`h-6 w-6 ${color}`} />
     </div>
@@ -30,8 +32,6 @@ const SkeletonCard = () => (
     <div className="mt-4 h-8 w-1/4 rounded bg-slate-200"></div>
   </div>
 );
-
-// --- Dashboard Sub-Components ---
 
 const RecentRegistrations = ({ volunteers, isLoading }) => (
   <div className="rounded-xl border bg-white p-6 shadow-sm">
@@ -63,7 +63,7 @@ const RecentRegistrations = ({ volunteers, isLoading }) => (
     </div>
     <Link to="/volunteers" className="mt-4 flex items-center justify-end gap-1 text-sm font-semibold text-sky-600 hover:text-sky-700">
       View All
-      <FiArrowRight className="h-4 w-4" />
+      <ArrowRightIcon className="h-4 w-4" />
     </Link>
   </div>
 );
@@ -99,8 +99,6 @@ const PlatformChart = ({ volunteers, isLoading }) => {
     );
 };
 
-// --- Main Dashboard Page ---
-
 export default function DashboardPage() {
   const [allVolunteers, setAllVolunteers] = useState([]);
   const [stats, setStats] = useState({ total: 0, pending: 0, approved: 0, rejected: 0 });
@@ -117,13 +115,14 @@ export default function DashboardPage() {
         });
         if (!response.ok) throw new Error('Failed to fetch volunteer data.');
         const data = await response.json();
-        const sortedData = data.sort((a, b) => new Date(b.registration_date) - new Date(a.registration_date));
+        const volunteersArray = data.results || data;
+        const sortedData = volunteersArray.sort((a, b) => new Date(b.registration_date) - new Date(a.registration_date));
         setAllVolunteers(sortedData);
         setStats({
-          total: data.length,
-          pending: data.filter(v => v.status === 'pending').length,
-          approved: data.filter(v => v.status === 'approved').length,
-          rejected: data.filter(v => v.status === 'rejected').length,
+          total: volunteersArray.length,
+          pending: volunteersArray.filter(v => v.status === 'pending').length,
+          approved: volunteersArray.filter(v => v.status === 'approved').length,
+          rejected: volunteersArray.filter(v => v.status === 'rejected').length,
         });
       } catch (err) { console.error(err.message); } finally { setIsLoading(false); }
     };
@@ -137,10 +136,11 @@ export default function DashboardPage() {
       <div className="mt-6 grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         {isLoading ? Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />) :
             <>
-                <KpiCard title="Total Volunteers" value={stats.total} icon={FiUsers} color="text-sky-500" status="all" />
-                <KpiCard title="Pending Approval" value={stats.pending} icon={FiClock} color="text-amber-500" status="pending" />
-                <KpiCard title="Approved Volunteers" value={stats.approved} icon={FiCheckCircle} color="text-emerald-500" status="approved" />
-                <KpiCard title="Rejected Applicants" value={stats.rejected} icon={FiXCircle} color="text-rose-500" status="rejected" />
+                <KpiCard title="Total Volunteers" value={stats.total} icon={UsersIcon} color="text-sky-500" status="all" />
+                <KpiCard title="Pending Approval" value={stats.pending} icon={ClockIcon} color="text-amber-500" status="pending" />
+                {/* --- THIS LINE WAS FIXED --- */}
+                <KpiCard title="Approved Volunteers" value={stats.approved} icon={CheckCircleIcon} color="text-emerald-500" status="approved" />
+                <KpiCard title="Rejected Applicants" value={stats.rejected} icon={XCircleIcon} color="text-rose-500" status="rejected" />
             </>
         }
       </div>

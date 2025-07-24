@@ -1,27 +1,24 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { useNavigate, useLocation } from 'react-router-dom'; // 1. Import useNavigate
+import { useNavigate, useLocation } from 'react-router-dom';
 import VolunteerDetailModal from '../components/VolunteerDetailModal';
 import { 
-    FiUsers, 
-    FiCheckCircle, 
-    FiXCircle, 
-    FiClock, 
-    FiInbox, 
-    FiAlertCircle, 
-    FiSearch, 
-    FiChevronUp, 
-    FiChevronDown, 
-    FiMail, 
-    FiCalendar 
-} from 'react-icons/fi';
-// 2. Import the new icons from Heroicons
-import { PencilSquareIcon, TrashIcon, ArrowTopRightOnSquareIcon } from '@heroicons/react/24/outline';
+    UsersIcon, 
+    CheckCircleIcon, 
+    XCircleIcon, 
+    ClockIcon, 
+    MagnifyingGlassIcon, 
+    ChevronUpIcon, 
+    ChevronDownIcon, 
+    EnvelopeIcon, 
+    CalendarIcon,
+    PencilSquareIcon, 
+    TrashIcon, 
+    ArrowTopRightOnSquareIcon
+} from '@heroicons/react/24/outline';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000';
 const ITEMS_PER_PAGE = 10;
-
-// --- Helper Components (Unchanged) ---
 
 const StatusBadge = ({ status }) => {
   const statusStyles = {
@@ -44,24 +41,24 @@ const SortableHeader = ({ children, name, sortConfig, onSort }) => {
         <th scope="col" className="px-6 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider cursor-pointer" onClick={() => onSort(name)}>
             <div className="flex items-center gap-2">
                 {children}
-                {isSorted ? (direction === 'ascending' ? <FiChevronUp className="h-4 w-4" /> : <FiChevronDown className="h-4 w-4" />) : <FiChevronDown className="h-4 w-4 text-slate-300" />}
+                {isSorted ? (direction === 'ascending' ? <ChevronUpIcon className="h-4 w-4" /> : <ChevronDownIcon className="h-4 w-4" />) : <ChevronDownIcon className="h-4 w-4 text-slate-300" />}
             </div>
         </th>
     );
 };
 
-// --- Main Page Component ---
-
 export default function VolunteerListPage() {
   const { state: locationState } = useLocation();
   const { authToken } = useAuth();
-  const navigate = useNavigate(); // 3. Initialize the navigate function
+  const navigate = useNavigate();
   
   const [allVolunteers, setAllVolunteers] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
   
-  const [activeStatus, setActiveStatus] = useState(locationState?.defaultStatus || 'pending'); // Default to 'pending' tab
+  // --- THIS IS THE CHANGED LINE ---
+  const [activeStatus, setActiveStatus] = useState(locationState?.defaultStatus || 'all');
+  
   const [searchQuery, setSearchQuery] = useState('');
   const [sortConfig, setSortConfig] = useState({ key: 'registration_date', direction: 'descending' });
   const [currentPage, setCurrentPage] = useState(1);
@@ -78,7 +75,7 @@ export default function VolunteerListPage() {
         const response = await fetch(`${API_BASE_URL}/api/volunteers/`, { headers: { 'Authorization': `Token ${authToken}` } });
         if (!response.ok) throw new Error('Failed to fetch volunteer data.');
         const data = await response.json();
-        setAllVolunteers(data);
+        setAllVolunteers(data.results || data);
       } catch (err) { setError(err.message); } finally { setIsLoading(false); }
     };
     fetchVolunteers();
@@ -132,30 +129,28 @@ export default function VolunteerListPage() {
     }
   };
 
-  // 4. New function to navigate to the dedicated detail page
   const goToDetailPage = (id) => {
     navigate(`/volunteers/${id}`);
   };
   
   const statusTabs = [
-    { name: 'All', value: 'all', icon: FiUsers }, 
-    { name: 'Pending', value: 'pending', icon: FiClock }, 
-    { name: 'Approved', value: 'approved', icon: FiCheckCircle }, 
-    { name: 'Rejected', value: 'rejected', icon: FiXCircle },
+    { name: 'All', value: 'all', icon: UsersIcon }, 
+    { name: 'Pending', value: 'pending', icon: ClockIcon }, 
+    { name: 'Approved', value: 'approved', icon: CheckCircleIcon }, 
+    { name: 'Rejected', value: 'rejected', icon: XCircleIcon },
   ];
 
   return (
     <>
       <main className="flex-1 bg-slate-50 p-4 sm:p-6 lg:p-8">
         <div className="max-w-7xl mx-auto">
-          {/* Header, Search, and Tabs (Unchanged) */}
           <div className="block md:flex md:items-center md:justify-between">
             <div className="mb-4 md:mb-0">
               <h1 className="text-3xl font-bold text-slate-900 tracking-tight">Volunteer Management</h1>
               <p className="mt-1 text-sm text-slate-600">Search, sort, and manage all registrations.</p>
             </div>
             <div className="relative">
-              <FiSearch className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-slate-400" />
+              <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-slate-400" />
               <input type="text" placeholder="Search volunteers..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full rounded-lg border border-slate-300 bg-white py-2 pl-10 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500"/>
             </div>
           </div>
@@ -180,9 +175,6 @@ export default function VolunteerListPage() {
           </div>
 
           <div className="bg-white rounded-2xl shadow-lg border border-slate-200/80 overflow-hidden">
-            {/* ... Mobile Card View remains the same but with updated actions ... */}
-
-            {/* Desktop Table View (Updated Actions) */}
             <table className="w-full hidden md:table">
               <thead className="bg-slate-100">
                 <tr>
@@ -194,7 +186,6 @@ export default function VolunteerListPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200">
-                {/* ... loading, error, and empty states ... */}
                 { !isLoading && !error && paginatedVolunteers.length > 0 && paginatedVolunteers.map((v) => (
                   <tr key={v.id} className="hover:bg-slate-50">
                     <td className="whitespace-nowrap px-6 py-4 text-sm font-semibold text-slate-800">{v.first_name} {v.last_name}</td>
@@ -202,7 +193,6 @@ export default function VolunteerListPage() {
                     <td className="whitespace-nowrap px-6 py-4"><StatusBadge status={v.status} /></td>
                     <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-600">{new Date(v.registration_date).toLocaleDateString()}</td>
                     <td className="whitespace-nowrap px-6 py-4">
-                      {/* 5. UPDATED ACTION BUTTONS */}
                       <div className="flex items-center gap-x-4">
                         <button onClick={() => handleOpenModal(v)} className="p-2 rounded-md text-slate-500 hover:bg-slate-100 hover:text-sky-700" title="Quick View/Edit Status">
                           <PencilSquareIcon className="h-5 w-5" />
@@ -224,7 +214,6 @@ export default function VolunteerListPage() {
               </tbody>
             </table>
 
-            {/* Pagination (Unchanged) */}
             {totalPages > 1 && (
                 <div className="flex items-center justify-between border-t border-slate-200 bg-white px-4 py-3">
                     <div><p className="text-sm text-slate-700">Page <span className="font-medium">{currentPage}</span> of <span className="font-medium">{totalPages}</span></p></div>

@@ -271,15 +271,39 @@ const sortOptions = [
     { value: 'avg_heart_rate', label: 'Avg Heart Rate' },
 ];
 
-const LoadingSpinner = () => (
-    <svg className="animate-spin h-8 w-8 text-sky-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-    </svg>
+const SessionListItemSkeleton = () => (
+    <div className="border rounded-xl p-4 bg-white animate-pulse">
+        <div className="flex justify-between items-start gap-2 mb-3">
+            <div className="flex items-start gap-3 w-full">
+                <div className="h-5 w-5 rounded bg-slate-200 mt-0.5"></div>
+                <div className="w-full space-y-2">
+                    <div className="h-5 w-2/3 bg-slate-200 rounded"></div>
+                    <div className="h-3 w-1/3 bg-slate-200 rounded"></div>
+                </div>
+            </div>
+        </div>
+        <div className="bg-slate-50 rounded-md p-3 mt-3 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-x-4 gap-y-2">
+            {Array.from({ length: 5 }).map((_, i) => (
+                <div key={i} className="h-5 w-20 bg-slate-200 rounded"></div>
+            ))}
+        </div>
+    </div>
+);
+
+const SessionListSkeletonContainer = ({ count }) => (
+    <div className="space-y-4">
+        <div className="flex items-center pb-2 animate-pulse">
+            <div className="h-5 w-5 rounded bg-slate-200"></div>
+            <div className="ml-3 h-4 w-24 bg-slate-200 rounded"></div>
+        </div>
+        {Array.from({ length: count }).map((_, i) => (
+            <SessionListItemSkeleton key={i} />
+        ))}
+    </div>
 );
 
 const PaginationControls = ({ paginationInfo, onPageChange, currentPage, pageSize }) => {
-    if (!paginationInfo || (typeof pageSize === 'number' && paginationInfo.count <= pageSize)) {
+    if (pageSize === 'all' || !paginationInfo || (typeof pageSize === 'number' && paginationInfo.count <= pageSize)) {
         return null;
     }
 
@@ -323,7 +347,8 @@ export default function VolunteerDetailPage() {
   const [volunteer, setVolunteer] = useState(null);
   const [sessions, setSessions] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isSessionsLoading, setIsSessionsLoading] = useState(true);
+  const [hasFetchedOnce, setHasFetchedOnce] = useState(false);
   const [error, setError] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   
@@ -334,68 +359,111 @@ export default function VolunteerDetailPage() {
   
   const [selectedSessions, setSelectedSessions] = useState(new Set());
   
-  // Pagination & Page Size State
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [paginationInfo, setPaginationInfo] = useState(null);
   const [refetchTrigger, setRefetchTrigger] = useState(0);
   const pageSizeOptions = [10, 25, 50, 'all'];
 
-  // Combined data fetching logic
   useEffect(() => {
     if (!authToken) return;
     const controller = new AbortController();
 
+    const fetchAllSessionsInParallel = async (initialUrl) => {
+        // 1. Fetch the first page to get total count and page size
+        const firstPageRes = await fetch(initialUrl, {
+            headers: { 'Authorization': `Token ${authToken}` },
+            signal: controller.signal,
+        });
+        if (!firstPageRes.ok) throw new Error('Failed to load initial session data for parallel fetch.');
+        const firstPageData = await firstPageRes.json();
+
+        const { count, results } = firstPageData;
+        if (!results || results.length === 0) return [];
+        
+        const inferredPageSize = results.length;
+        const totalPages = Math.ceil(count / inferredPageSize);
+        
+        if (totalPages <= 1) return results;
+
+        // 2. Create an array of promises for the remaining pages
+        const pagePromises = [];
+        for (let page = 2; page <= totalPages; page++) {
+            const pageUrl = new URL(initialUrl);
+            pageUrl.searchParams.set('page', page);
+            pagePromises.push(
+                fetch(pageUrl.toString(), { 
+                    headers: { 'Authorization': `Token ${authToken}` }, 
+                    signal: controller.signal 
+                }).then(res => res.json())
+            );
+        }
+
+        // 3. Await all promises in parallel
+        const remainingPagesData = await Promise.all(pagePromises);
+
+        // 4. Combine results
+        const allSessions = results;
+        remainingPagesData.forEach(pageData => {
+            if (pageData.results) {
+                allSessions.push(...pageData.results);
+            }
+        });
+
+        return allSessions;
+    };
+
     const fetchData = async () => {
+      setIsSessionsLoading(true);
       if (!volunteer) setIsLoading(true);
-      else setIsRefreshing(true);
       setError(null);
       
       try {
-        if (!volunteer) {
-          const volunteerRes = await fetch(`${API_BASE_URL}/api/volunteers/${volunteerId}/`, {
+        const volunteerPromise = volunteer ? Promise.resolve(volunteer) : fetch(`${API_BASE_URL}/api/volunteers/${volunteerId}/`, {
             headers: { 'Authorization': `Token ${authToken}` },
             signal: controller.signal,
-          });
-          if (!volunteerRes.ok) throw new Error('Failed to load volunteer data.');
-          setVolunteer(await volunteerRes.json());
-        }
+        }).then(res => {
+            if (!res.ok) throw new Error('Failed to load volunteer data.');
+            return res.json();
+        });
         
         const ordering = sortDirection === 'desc' ? `-${sortBy}` : sortBy;
-        let sessionsUrl = `${API_BASE_URL}/api/sessions/?volunteer=${volunteerId}&ordering=${ordering}`;
+        const initialSessionUrl = `${API_BASE_URL}/api/sessions/?volunteer=${volunteerId}&ordering=${ordering}`;
 
-        // Add pagination params only if not showing all
+        let sessionsPromise;
         if (pageSize !== 'all') {
-          sessionsUrl += `&page=${currentPage}&page_size=${pageSize}`;
-        }
-        
-        const sessionsRes = await fetch(sessionsUrl, {
-          headers: { 'Authorization': `Token ${authToken}` },
-          signal: controller.signal,
-        });
-        if (!sessionsRes.ok) throw new Error('Failed to load session data.');
-        const sessionsData = await sessionsRes.json();
-        
-        setSessions(sessionsData.results || sessionsData);
-
-        // Set pagination info only for paginated responses
-        if (sessionsData.results) {
-            setPaginationInfo({
-              count: sessionsData.count,
-              next: sessionsData.next,
-              previous: sessionsData.previous,
+            const paginatedUrl = `${initialSessionUrl}&page=${currentPage}&page_size=${pageSize}`;
+            sessionsPromise = fetch(paginatedUrl, { headers: { 'Authorization': `Token ${authToken}` }, signal: controller.signal }).then(res => {
+                if (!res.ok) throw new Error('Failed to load session data.');
+                return res.json();
             });
         } else {
-            setPaginationInfo(null); // No pagination info if all are shown
+            sessionsPromise = fetchAllSessionsInParallel(initialSessionUrl);
+        }
+
+        const [volunteerData, sessionsResponse] = await Promise.all([volunteerPromise, sessionsPromise]);
+        
+        setVolunteer(volunteerData);
+
+        if (pageSize !== 'all') {
+            setSessions(sessionsResponse.results || []);
+            setPaginationInfo({
+              count: sessionsResponse.count,
+              next: sessionsResponse.next,
+              previous: sessionsResponse.previous,
+            });
+        } else {
+            setSessions(sessionsResponse);
+            setPaginationInfo(null);
         }
 
         setSelectedSessions(new Set());
-
       } catch (err) {
         if (err.name !== 'AbortError') setError(err.message);
       } finally {
         setIsLoading(false);
-        setIsRefreshing(false);
+        setIsSessionsLoading(false);
+        setHasFetchedOnce(true);
       }
     };
     
@@ -417,14 +485,14 @@ export default function VolunteerDetailPage() {
   const handlePageChange = (newPage) => {
     if (newPage > 0 && newPage !== currentPage) {
       setCurrentPage(newPage);
-      window.scrollTo(0, 0); // Scroll to top on page change
+      window.scrollTo(0, 0);
     }
   };
   
   const handlePageSizeChange = (e) => {
     const newSize = e.target.value === 'all' ? 'all' : parseInt(e.target.value, 10);
     setPageSize(newSize);
-    setCurrentPage(1); // Reset to first page when page size changes
+    setCurrentPage(1);
   };
 
   const handleSortChange = (newSortBy) => {
@@ -586,48 +654,47 @@ export default function VolunteerDetailPage() {
                   </div>
                 </div>
 
-                <div className="relative">
-                  {isRefreshing && (
-                    <div className="absolute inset-0 bg-white/80 flex items-center justify-center z-10 rounded-lg">
-                      <LoadingSpinner />
-                    </div>
-                  )}
-                  <div className="space-y-4">
-                    {sessionsWithDerivedStats.length > 0 && (
-                      <div className="flex items-center pb-2">
-                        <input
-                          type="checkbox"
-                          className="h-5 w-5 rounded border-gray-300 text-sky-600 focus:ring-sky-500"
-                          checked={isAllSelected}
-                          onChange={handleSelectAll}
-                          ref={el => el && (el.indeterminate = selectedSessions.size > 0 && !isAllSelected)}
+                {isSessionsLoading ? (
+                    <SessionListSkeletonContainer count={typeof pageSize === 'number' ? pageSize : 10} />
+                ) : (
+                    <div>
+                        <div className="space-y-4">
+                            {sessionsWithDerivedStats.length > 0 ? (
+                                <>
+                                    <div className="flex items-center pb-2">
+                                        <input
+                                            type="checkbox"
+                                            className="h-5 w-5 rounded border-gray-300 text-sky-600 focus:ring-sky-500"
+                                            checked={isAllSelected}
+                                            onChange={handleSelectAll}
+                                            ref={el => el && (el.indeterminate = selectedSessions.size > 0 && !isAllSelected)}
+                                        />
+                                        <label className="ml-3 text-sm font-medium text-gray-700">Select All ({sessionsWithDerivedStats.length})</label>
+                                    </div>
+                                    {sessionsWithDerivedStats.map(session => (
+                                        <SessionListItem 
+                                            key={session.id} 
+                                            session={session} 
+                                            onDelete={handleSingleDelete} 
+                                            sortBy={sortBy}
+                                            isSelected={selectedSessions.has(session.id)}
+                                            onSelect={handleSelectSession}
+                                            onReuploadSuccess={triggerRefetch}
+                                        />
+                                    ))}
+                                </>
+                            ) : (
+                                hasFetchedOnce && <p className="text-sm text-gray-500 text-center py-12">No sessions have been uploaded for this volunteer yet.</p>
+                            )}
+                        </div>
+                        <PaginationControls 
+                            paginationInfo={paginationInfo}
+                            currentPage={currentPage}
+                            onPageChange={handlePageChange}
+                            pageSize={pageSize}
                         />
-                        <label className="ml-3 text-sm font-medium text-gray-700">Select All on Page</label>
-                      </div>
-                    )}
-                    {sessionsWithDerivedStats.length > 0 ? (
-                        sessionsWithDerivedStats.map(session => (
-                          <SessionListItem 
-                            key={session.id} 
-                            session={session} 
-                            onDelete={handleSingleDelete} 
-                            sortBy={sortBy}
-                            isSelected={selectedSessions.has(session.id)}
-                            onSelect={handleSelectSession}
-                            onReuploadSuccess={triggerRefetch}
-                          />
-                        ))
-                    ) : (
-                        <p className="text-sm text-gray-500 text-center py-12">No sessions have been uploaded for this volunteer yet.</p>
-                    )}
-                  </div>
-                  <PaginationControls 
-                    paginationInfo={paginationInfo}
-                    currentPage={currentPage}
-                    onPageChange={handlePageChange}
-                    pageSize={pageSize}
-                  />
-                </div>
+                    </div>
+                )}
             </div>
           </div>
         </div>
