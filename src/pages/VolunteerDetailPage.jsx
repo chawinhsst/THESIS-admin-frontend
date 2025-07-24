@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { 
@@ -12,14 +12,27 @@ import {
     TrashIcon,
     ExclamationTriangleIcon,
     PencilSquareIcon,
-    ArrowDownTrayIcon,
-    ArrowTopRightOnSquareIcon
+    ArrowTopRightOnSquareIcon,
+    ClockIcon,
+    HeartIcon,
+    ArrowsRightLeftIcon,
+    ArrowsUpDownIcon,
 } from '@heroicons/react/24/outline';
 import VolunteerDetailModal from '../components/VolunteerDetailModal';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000';
 
-// --- Reusable Sub-Components ---
+const formatDuration = (totalSeconds) => {
+  if (totalSeconds == null) return 'N/A';
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = Math.floor(totalSeconds % 60);
+  return [
+    hours > 0 ? hours.toString().padStart(2, '0') : null,
+    minutes.toString().padStart(2, '0'),
+    seconds.toString().padStart(2, '0'),
+  ].filter(Boolean).join(':');
+};
 
 const SkeletonCard = ({ lines = 3 }) => (
   <div className="bg-white p-6 rounded-xl shadow-lg animate-pulse">
@@ -42,14 +55,12 @@ const InfoItem = ({ icon, label, value }) => (
 
 const VolunteerSummaryCard = ({ volunteer, onEdit }) => {
     if (!volunteer) return <SkeletonCard />;
-
     return (
         <div className="bg-white p-6 rounded-xl shadow-lg">
             <div className="flex justify-between items-start">
                 <h3 className="text-lg font-bold text-gray-900">Volunteer Information</h3>
                 <button onClick={onEdit} className="flex items-center gap-2 text-sm font-medium text-sky-600 hover:text-sky-800">
-                    <PencilSquareIcon className="w-5 h-5"/>
-                    Edit
+                    <PencilSquareIcon className="w-5 h-5"/> Edit
                 </button>
             </div>
             <div className="mt-4 border-t pt-4 space-y-4">
@@ -57,7 +68,7 @@ const VolunteerSummaryCard = ({ volunteer, onEdit }) => {
                 <InfoItem icon={<EnvelopeIcon className="w-5 h-5" />} label="Email" value={volunteer.email} />
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
                     <InfoItem icon={<CalendarIcon className="w-5 h-5" />} label="Date of Birth" value={volunteer.date_of_birth} />
-                    <InfoItem icon={<CheckBadgeIcon className="w-5 h-5" />} label="Status" value={<span className="font-semibold text-emerald-700">Approved</span>} />
+                    <InfoItem icon={<CheckBadgeIcon className="w-5 h-5" />} label="Status" value={<span className={`font-semibold ${volunteer.status === 'approved' ? 'text-emerald-700' : 'text-amber-700'}`}>{volunteer.status}</span>} />
                 </div>
             </div>
         </div>
@@ -65,34 +76,43 @@ const VolunteerSummaryCard = ({ volunteer, onEdit }) => {
 };
 
 const SessionUploader = ({ volunteerId, onUploadSuccess }) => {
-  const [file, setFile] = useState(null);
+  const [files, setFiles] = useState([]);
   const [isUploading, setIsUploading] = useState(false);
   const { authToken } = useAuth();
 
-  const handleFileChange = (e) => setFile(e.target.files ? e.target.files[0] : null);
+  const handleFileChange = (e) => {
+    if (e.target.files) {
+      setFiles(Array.from(e.target.files));
+    }
+  };
 
   const handleUpload = async () => {
-    if (!file) return;
+    if (files.length === 0) return;
     setIsUploading(true);
-
-    const formData = new FormData();
-    formData.append('session_file', file);
-    formData.append('volunteer', volunteerId);
-    formData.append('session_date', new Date().toISOString());
-    formData.append('source_type', 'admin_upload');
-
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/sessions/`, {
+    const uploadPromises = files.map(file => {
+      const formData = new FormData();
+      formData.append('session_file', file);
+      formData.append('volunteer', volunteerId);
+      formData.append('session_date', new Date().toISOString());
+      formData.append('source_type', 'admin_upload');
+      return fetch(`${API_BASE_URL}/api/sessions/`, {
         method: 'POST',
         headers: { 'Authorization': `Token ${authToken}` },
         body: formData,
+      }).then(response => {
+        if (!response.ok) {
+          throw new Error(`Upload failed for ${file.name}`);
+        }
+        return response.json();
       });
-      if (!response.ok) throw new Error('Upload failed. Please check the file format.');
+    });
+    try {
+      await Promise.all(uploadPromises);
+      alert(`${files.length} file(s) uploaded successfully!`);
       onUploadSuccess();
-      setFile(null);
-      alert('Upload successful!');
+      setFiles([]);
     } catch (error) {
-      alert(`Error: ${error.message}`);
+      alert(`An error occurred during upload: ${error.message}`);
     } finally {
       setIsUploading(false);
     }
@@ -100,158 +120,202 @@ const SessionUploader = ({ volunteerId, onUploadSuccess }) => {
 
   return (
     <div className="bg-white p-6 rounded-xl shadow-lg mt-6">
-      <h3 className="text-lg font-bold text-gray-900 border-b pb-2 mb-4">Upload New Session</h3>
+      <h3 className="text-lg font-bold text-gray-900 border-b pb-2 mb-4">Upload New Session(s)</h3>
       <div className="mt-1 flex justify-center rounded-lg border-2 border-dashed border-gray-300 px-6 pt-5 pb-6">
         <div className="space-y-1 text-center">
           <CloudArrowUpIcon className="mx-auto h-12 w-12 text-gray-400" />
           <div className="flex text-sm text-gray-600">
             <label htmlFor="file-upload" className="relative cursor-pointer rounded-md bg-white font-medium text-sky-600 focus-within:outline-none hover:text-sky-500">
-              <span>Choose a file</span>
-              <input id="file-upload" name="file-upload" type="file" className="sr-only" onChange={handleFileChange} />
+              <span>Choose files</span>
+              <input id="file-upload" name="file-upload" type="file" className="sr-only" onChange={handleFileChange} multiple />
             </label>
           </div>
-          {file ? <p className="text-xs text-gray-700 font-semibold">{file.name}</p> : <p className="text-xs text-gray-500">CSV, FIT, or TCX files</p>}
+          <p className="text-xs text-gray-500">CSV, FIT, or TCX files</p>
         </div>
       </div>
-      <button onClick={handleUpload} disabled={!file || isUploading} className="mt-4 w-full rounded-md bg-sky-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-sky-700 disabled:bg-slate-400 disabled:cursor-not-allowed">
-        {isUploading ? 'Uploading...' : 'Upload Session'}
+      
+      {files.length > 0 && (
+        <div className="mt-4 border-t pt-4">
+            <h4 className="text-sm font-medium text-gray-800">Selected files:</h4>
+            <ul className="mt-2 space-y-1 text-xs text-gray-600 list-disc list-inside">
+                {files.map(file => <li key={file.name}>{file.name}</li>)}
+            </ul>
+        </div>
+      )}
+
+      <button onClick={handleUpload} disabled={files.length === 0 || isUploading} className="mt-4 w-full rounded-md bg-sky-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-sky-700 disabled:bg-slate-400 disabled:cursor-not-allowed">
+        {isUploading ? `Uploading ${files.length} file(s)...` : `Upload ${files.length} Session(s)`}
       </button>
     </div>
   );
 };
 
+const StatItem = ({ icon, value, isSorted = false }) => (
+  <div className="flex items-center text-sm text-slate-600">
+    <div className="flex-shrink-0 w-5 h-5 mr-1.5 text-slate-400">{icon}</div>
+    <span className={isSorted ? 'font-bold text-sky-600' : ''}>{value}</span>
+  </div>
+);
 
-// --- Enhanced Session List Item Component ---
-const SessionListItem = ({ session, onLabelChange, onDelete }) => {
-  const [currentLabel, setCurrentLabel] = useState(session.admin_label || 'Normal');
-  const [isSavingLabel, setIsSavingLabel] = useState(false);
-  const { authToken } = useAuth();
+const SessionListItem = ({ session, onDelete, sortBy, isSelected, onSelect, onReuploadSuccess }) => {
   const navigate = useNavigate();
+  const { authToken } = useAuth();
+  const fileInputRef = useRef(null);
   
-  const predictionColor = session.ml_prediction === 'Anomaly' ? 'text-red-500' : 'text-green-600';
+  const hasData = session.status === 'completed';
+  const hasFailed = session.status === 'failed';
 
-  const handleSaveLabel = async () => {
-    setIsSavingLabel(true);
+  const statusColors = {
+    completed: 'bg-emerald-100 text-emerald-800',
+    processing: 'bg-amber-100 text-amber-800',
+    failed: 'bg-red-100 text-red-800',
+  };
+
+  const handleReuploadClick = () => {
+    fileInputRef.current.click();
+  };
+
+  const handleFileReupload = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const formData = new FormData();
+    formData.append('session_file', file);
+
     try {
-      // 1. Await the fetch call and store the server's response
       const response = await fetch(`${API_BASE_URL}/api/sessions/${session.id}/`, {
         method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Token ${authToken}`
-        },
-        body: JSON.stringify({ admin_label: currentLabel })
+        headers: { 'Authorization': `Token ${authToken}` },
+        body: formData,
       });
-
-      // 2. CRITICAL CHECK: If the response is NOT okay, throw an error
-      if (!response.ok) {
-        // This forces the code to jump to the 'catch' block below
-        throw new Error(`Server returned an error: ${response.status}`);
-      }
-
-      // 3. This success code now ONLY runs if the check above passes
-      onLabelChange(session.id, currentLabel);
-      alert("Label saved successfully!");
-
+      if (!response.ok) throw new Error('Re-upload failed.');
+      
+      alert('File submitted for reprocessing!');
+      onReuploadSuccess();
     } catch (error) {
-      // The 'catch' block will now correctly handle server errors
-      console.error("Failed to save label:", error);
-      alert("Failed to save the label. The server responded with an error.");
-      setCurrentLabel(session.admin_label || 'Normal');
-    } finally {
-      setIsSavingLabel(false);
+      alert(error.message);
     }
   };
   
-  const handleDownload = () => {
-    if (!session.timeseries_data || session.timeseries_data.length === 0) {
-      alert("No time-series data available to download for this session.");
-      return;
-    }
-    const dataToExport = session.timeseries_data.map(row => ({
-      ...row,
-      admin_label: currentLabel
-    }));
-    const headers = Object.keys(dataToExport[0]);
-    const csvRows = [
-      headers.join(','),
-      ...dataToExport.map(row => 
-        headers.map(fieldName => JSON.stringify(row[fieldName], (key, value) => value === null ? '' : value)).join(',')
-      )
-    ];
-    const blob = new Blob([csvRows.join('\n')], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    const url = URL.createObjectURL(blob);
-    link.setAttribute('href', url);
-    link.setAttribute('download', `session_${session.id}_labeled_data.csv`);
-    link.style.visibility = 'hidden';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  };
-
   return (
-    <div className="border border-gray-200 rounded-xl p-4 bg-white hover:shadow-lg transition-shadow duration-300">
+    <div className={`border rounded-xl p-4 bg-white transition-all duration-200 ${isSelected ? 'shadow-md border-sky-500 ring-2 ring-sky-500' : 'border-gray-200 hover:shadow-md'}`}>
       <div className="flex flex-wrap justify-between items-start gap-2 mb-3">
-        <div>
-          <p className="font-bold text-gray-800 flex items-center gap-2">
-            <CalendarIcon className="w-5 h-5 text-gray-400" /> 
-            Run Date: {new Date(session.session_date).toLocaleString()}
-          </p>
-          <p className="text-xs text-gray-500 ml-7">
-            Uploaded: {new Date(session.uploaded_at).toLocaleDateString()}
-          </p>
+        <div className="flex items-start gap-3">
+          <input
+            type="checkbox"
+            className="h-5 w-5 rounded border-gray-300 text-sky-600 focus:ring-sky-500 mt-0.5"
+            checked={isSelected}
+            onChange={() => onSelect(session.id)}
+            onClick={(e) => e.stopPropagation()}
+          />
+          <div>
+            <p className={`font-bold text-gray-800 flex items-center gap-2 ${sortBy === 'session_date' ? 'text-sky-600' : ''}`}>
+              <CalendarIcon className="w-5 h-5 text-gray-400" /> 
+              Run Date: {new Date(session.runDate).toLocaleString()}
+            </p>
+            <div className="flex items-center gap-2 ml-7 mt-1">
+              <p className="text-xs text-gray-500">Uploaded: {new Date(session.uploaded_at).toLocaleDateString()}</p>
+              <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${statusColors[session.status] || 'bg-gray-100 text-gray-800'}`}>
+                {session.status}
+              </span>
+            </div>
+          </div>
         </div>
         <div className="flex items-center space-x-1">
             <button onClick={() => navigate(`/sessions/${session.id}`)} className="p-1.5 rounded-md hover:bg-sky-100 text-gray-400 hover:text-sky-600" title="Go to Session Detail Page">
                 <ArrowTopRightOnSquareIcon className="w-4 h-4" />
             </button>
-            <button onClick={handleDownload} className="p-1.5 rounded-md hover:bg-blue-100 text-gray-400 hover:text-blue-600" title="Download Labeled CSV">
-                <ArrowDownTrayIcon className="w-4 h-4" />
-            </button>
-            <button onClick={() => onDelete(session.id)} className="p-1.5 rounded-md hover:bg-red-100 text-gray-400 hover:text-red-600" title="Delete Session">
+            <button onClick={(e) => { e.stopPropagation(); onDelete(session.id); }} className="p-1.5 rounded-md hover:bg-red-100 text-gray-400 hover:text-red-600" title="Delete Session">
                 <TrashIcon className="w-4 h-4" />
             </button>
         </div>
       </div>
-      <div className="bg-slate-50 rounded-md p-3 mt-3 grid grid-cols-1 md:grid-cols-2 gap-4 items-center">
-        <div className="flex items-center">
-          <CpuChipIcon className="mr-3 h-6 w-6 text-gray-500 flex-shrink-0" />
-          <div>
-            <p className="text-xs font-medium text-gray-500">ML PREDICTION</p>
-            <p className={`font-bold ${predictionColor}`}>{session.ml_prediction || 'Not Processed'}</p>
-            {session.ml_confidence != null && <p className="text-xs text-gray-500">Confidence: {session.ml_confidence}%</p>}
-          </div>
+      
+      {hasData && (
+        <div className="bg-slate-50 rounded-md p-3 mt-3 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-x-4 gap-y-2">
+            <StatItem icon={<ArrowsRightLeftIcon />} value={`${session.total_distance_km || 0} km`} isSorted={sortBy === 'total_distance_km'} />
+            <StatItem icon={<ClockIcon />} value={formatDuration(session.total_duration_secs)} isSorted={sortBy === 'total_duration_secs'}/>
+            <StatItem icon={<HeartIcon />} value={`Avg: ${session.avg_heart_rate || 'N/A'}`} isSorted={sortBy === 'avg_heart_rate'}/>
+            <StatItem icon={<HeartIcon className="text-blue-500"/>} value={`Min: ${session.min_heart_rate || 'N/A'}`} isSorted={sortBy === 'min_heart_rate'}/>
+            <StatItem icon={<HeartIcon className="text-red-500"/>} value={`Max: ${session.max_heart_rate || 'N/A'}`} isSorted={sortBy === 'max_heart_rate'}/>
         </div>
-        <div className="flex items-center space-x-2">
-          <div className="flex-grow">
-            <label htmlFor={`label-${session.id}`} className="text-xs font-medium text-gray-500 flex items-center"><TagIcon className="mr-1 h-4 w-4" />ADMIN LABEL</label>
-            <select
-              id={`label-${session.id}`}
-              value={currentLabel}
-              onChange={(e) => setCurrentLabel(e.target.value)}
-              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm text-sm focus:ring-sky-500 focus:border-sky-500"
-            >
-              <option>Normal</option>
-              <option>Ischemic Anomaly</option>
-              <option>Arrhythmic Anomaly</option>
-            </select>
-          </div>
-          <button 
-            onClick={handleSaveLabel} 
-            disabled={isSavingLabel || currentLabel === (session.admin_label || 'Normal')}
-            className="self-end rounded-md bg-sky-600 px-3 py-2 text-xs font-semibold text-white shadow-sm hover:bg-sky-700 disabled:bg-slate-400 disabled:cursor-not-allowed"
-          >
-            {isSavingLabel ? '...' : 'Save'}
-          </button>
+      )}
+      
+      {hasFailed && (
+        <div className="bg-red-50 border border-red-200 rounded-md p-3 mt-3 flex items-center justify-between gap-4">
+            <div className="flex items-start gap-2">
+              <ExclamationTriangleIcon className="w-5 h-5 text-red-500 flex-shrink-0"/>
+              <div>
+                <p className="text-sm font-semibold text-red-800">Processing Failed</p>
+                <p className="text-xs text-red-700">{session.processing_error || 'An unknown error occurred.'}</p>
+              </div>
+            </div>
+            <div>
+              <input type="file" ref={fileInputRef} onChange={handleFileReupload} className="hidden" />
+              <button onClick={handleReuploadClick} className="text-sm font-medium text-white bg-sky-600 hover:bg-sky-700 rounded-md px-3 py-1.5">
+                Re-upload
+              </button>
+            </div>
         </div>
-      </div>
+      )}
     </div>
   );
 };
 
+const sortOptions = [
+    { value: 'session_date', label: 'Run Date' },
+    { value: 'total_distance_km', label: 'Distance' },
+    { value: 'total_duration_secs', label: 'Duration' },
+    { value: 'max_heart_rate', label: 'Max Heart Rate' },
+    { value: 'min_heart_rate', label: 'Min Heart Rate' },
+    { value: 'avg_heart_rate', label: 'Avg Heart Rate' },
+];
 
-// --- Main Page Component ---
+const LoadingSpinner = () => (
+    <svg className="animate-spin h-8 w-8 text-sky-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+    </svg>
+);
+
+const PaginationControls = ({ paginationInfo, onPageChange, currentPage, pageSize }) => {
+    if (!paginationInfo || (typeof pageSize === 'number' && paginationInfo.count <= pageSize)) {
+        return null;
+    }
+
+    const handlePrev = () => onPageChange(currentPage - 1);
+    const handleNext = () => onPageChange(currentPage + 1);
+
+    const fromItem = paginationInfo.count > 0 ? (currentPage - 1) * pageSize + 1 : 0;
+    const toItem = Math.min(currentPage * pageSize, paginationInfo.count);
+
+    return (
+        <div className="flex items-center justify-between mt-6 border-t pt-4">
+            <p className="text-sm text-slate-700">
+                Showing <span className="font-semibold">{fromItem}</span> to <span className="font-semibold">{toItem}</span> of{' '}
+                <span className="font-semibold">{paginationInfo.count}</span> results
+            </p>
+            <div className="flex gap-2">
+                <button
+                    onClick={handlePrev}
+                    disabled={!paginationInfo.previous}
+                    className="rounded-md bg-white px-3 py-1.5 text-sm font-medium text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                    Previous
+                </button>
+                <button
+                    onClick={handleNext}
+                    disabled={!paginationInfo.next}
+                    className="rounded-md bg-white px-3 py-1.5 text-sm font-medium text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                    Next
+                </button>
+            </div>
+        </div>
+    );
+};
+
+
 export default function VolunteerDetailPage() {
   const { volunteerId } = useParams();
   const { authToken } = useAuth();
@@ -259,46 +323,177 @@ export default function VolunteerDetailPage() {
   const [volunteer, setVolunteer] = useState(null);
   const [sessions, setSessions] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  
+  const [sortBy, setSortBy] = useState('session_date');
+  const [sortDirection, setSortDirection] = useState('desc');
+  const [isSortOpen, setIsSortOpen] = useState(false);
+  const sortDropdownRef = useRef(null);
+  
+  const [selectedSessions, setSelectedSessions] = useState(new Set());
+  
+  // Pagination & Page Size State
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  const [paginationInfo, setPaginationInfo] = useState(null);
+  const [refetchTrigger, setRefetchTrigger] = useState(0);
+  const pageSizeOptions = [10, 25, 50, 'all'];
 
-  const fetchData = useCallback(async () => {
+  // Combined data fetching logic
+  useEffect(() => {
     if (!authToken) return;
-    try {
-      const [volunteerRes, sessionsRes] = await Promise.all([
-        fetch(`${API_BASE_URL}/api/volunteers/${volunteerId}/`, { headers: { 'Authorization': `Token ${authToken}` } }),
-        fetch(`${API_BASE_URL}/api/sessions/?volunteer=${volunteerId}`, { headers: { 'Authorization': `Token ${authToken}` } }),
-      ]);
-      if (!volunteerRes.ok || !sessionsRes.ok) throw new Error('Failed to load page data.');
-      const volunteerData = await volunteerRes.json();
-      const sessionsData = await sessionsRes.json();
-      setVolunteer(volunteerData);
-      setSessions(sessionsData);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [volunteerId, authToken]);
+    const controller = new AbortController();
+
+    const fetchData = async () => {
+      if (!volunteer) setIsLoading(true);
+      else setIsRefreshing(true);
+      setError(null);
+      
+      try {
+        if (!volunteer) {
+          const volunteerRes = await fetch(`${API_BASE_URL}/api/volunteers/${volunteerId}/`, {
+            headers: { 'Authorization': `Token ${authToken}` },
+            signal: controller.signal,
+          });
+          if (!volunteerRes.ok) throw new Error('Failed to load volunteer data.');
+          setVolunteer(await volunteerRes.json());
+        }
+        
+        const ordering = sortDirection === 'desc' ? `-${sortBy}` : sortBy;
+        let sessionsUrl = `${API_BASE_URL}/api/sessions/?volunteer=${volunteerId}&ordering=${ordering}`;
+
+        // Add pagination params only if not showing all
+        if (pageSize !== 'all') {
+          sessionsUrl += `&page=${currentPage}&page_size=${pageSize}`;
+        }
+        
+        const sessionsRes = await fetch(sessionsUrl, {
+          headers: { 'Authorization': `Token ${authToken}` },
+          signal: controller.signal,
+        });
+        if (!sessionsRes.ok) throw new Error('Failed to load session data.');
+        const sessionsData = await sessionsRes.json();
+        
+        setSessions(sessionsData.results || sessionsData);
+
+        // Set pagination info only for paginated responses
+        if (sessionsData.results) {
+            setPaginationInfo({
+              count: sessionsData.count,
+              next: sessionsData.next,
+              previous: sessionsData.previous,
+            });
+        } else {
+            setPaginationInfo(null); // No pagination info if all are shown
+        }
+
+        setSelectedSessions(new Set());
+
+      } catch (err) {
+        if (err.name !== 'AbortError') setError(err.message);
+      } finally {
+        setIsLoading(false);
+        setIsRefreshing(false);
+      }
+    };
+    
+    fetchData();
+    
+    return () => controller.abort();
+  }, [volunteerId, authToken, currentPage, pageSize, sortBy, sortDirection, refetchTrigger]);
 
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
-
-  const handleLabelChange = (sessionId, newLabel) => {
-    setSessions(currentSessions => 
-      currentSessions.map(s => s.id === sessionId ? { ...s, admin_label: newLabel } : s)
-    );
+    function handleClickOutside(event) {
+      if (sortDropdownRef.current && !sortDropdownRef.current.contains(event.target)) {
+        setIsSortOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [sortDropdownRef]);
+  
+  const handlePageChange = (newPage) => {
+    if (newPage > 0 && newPage !== currentPage) {
+      setCurrentPage(newPage);
+      window.scrollTo(0, 0); // Scroll to top on page change
+    }
   };
   
-  const handleDeleteSession = async (sessionId) => {
+  const handlePageSizeChange = (e) => {
+    const newSize = e.target.value === 'all' ? 'all' : parseInt(e.target.value, 10);
+    setPageSize(newSize);
+    setCurrentPage(1); // Reset to first page when page size changes
+  };
+
+  const handleSortChange = (newSortBy) => {
+    if (sortBy === newSortBy) {
+      setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortBy(newSortBy);
+      setSortDirection('desc');
+    }
+    if (currentPage !== 1) setCurrentPage(1);
+    setIsSortOpen(false);
+  };
+  
+  const triggerRefetch = () => {
+    if (currentPage !== 1) setCurrentPage(1);
+    else setRefetchTrigger(c => c + 1);
+  };
+
+  const sessionsWithDerivedStats = useMemo(() => {
+    return sessions.map(session => {
+      const hasTimeseries = session.timeseries_data && session.timeseries_data.length > 0;
+      const runDate = hasTimeseries ? new Date(session.timeseries_data[0].timestamp) : new Date(session.session_date);
+      const heartRates = hasTimeseries ? session.timeseries_data.map(r => r.heart_rate).filter(hr => hr != null) : [];
+      const minHeartRate = heartRates.length ? Math.min(...heartRates) : null;
+      return { ...session, runDate, min_heart_rate: minHeartRate };
+    });
+  }, [sessions]);
+
+  const handleSelectSession = (sessionId) => {
+    setSelectedSessions(prevSelected => {
+      const newSelected = new Set(prevSelected);
+      if (newSelected.has(sessionId)) newSelected.delete(sessionId);
+      else newSelected.add(sessionId);
+      return newSelected;
+    });
+  };
+
+  const handleSelectAll = (e) => {
+    if (e.target.checked) setSelectedSessions(new Set(sessionsWithDerivedStats.map(s => s.id)));
+    else setSelectedSessions(new Set());
+  };
+
+  const handleDeleteSelected = async () => {
+    const sessionIdsToDelete = Array.from(selectedSessions);
+    if (sessionIdsToDelete.length === 0) return;
+    if (window.confirm(`Are you sure you want to delete ${sessionIdsToDelete.length} session(s)?`)) {
+      try {
+        await Promise.all(sessionIdsToDelete.map(id => 
+          fetch(`${API_BASE_URL}/api/sessions/${id}/`, {
+            method: 'DELETE',
+            headers: { 'Authorization': `Token ${authToken}` }
+          })
+        ));
+        triggerRefetch();
+        alert("Selected sessions deleted.");
+      } catch (error) {
+        alert("Failed to delete some sessions.");
+      }
+    }
+  };
+  
+  const handleSingleDelete = async (sessionId) => {
     if (window.confirm("Are you sure you want to delete this session?")) {
         try {
             await fetch(`${API_BASE_URL}/api/sessions/${sessionId}/`, {
                 method: 'DELETE',
                 headers: { 'Authorization': `Token ${authToken}` }
             });
-            setSessions(sessions.filter(s => s.id !== sessionId));
+            triggerRefetch();
             alert("Session deleted.");
         } catch (error) {
             alert("Failed to delete session.");
@@ -306,10 +501,8 @@ export default function VolunteerDetailPage() {
     }
   };
 
-  const handleUpdateVolunteer = (updatedVolunteer) => {
-    setVolunteer(updatedVolunteer);
-  };
-
+  const handleUpdateVolunteer = (updatedVolunteer) => { setVolunteer(updatedVolunteer); };
+  
   if (isLoading) {
     return (
         <div className="p-4 sm:p-8">
@@ -324,6 +517,9 @@ export default function VolunteerDetailPage() {
   
   if (error) return <div className="p-8 text-red-600 flex items-center gap-2"><ExclamationTriangleIcon className="w-6 h-6" /> Error: {error}</div>;
 
+  const currentSortLabel = sortOptions.find(opt => opt.value === sortBy)?.label;
+  const isAllSelected = sessionsWithDerivedStats.length > 0 && selectedSessions.size === sessionsWithDerivedStats.length;
+
   return (
     <>
       <div className="p-4 sm:p-8 bg-slate-50 min-h-full">
@@ -331,17 +527,106 @@ export default function VolunteerDetailPage() {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
           <div className="lg:col-span-1 space-y-6">
             <VolunteerSummaryCard volunteer={volunteer} onEdit={() => setIsModalOpen(true)} />
-            <SessionUploader volunteerId={volunteerId} onUploadSuccess={fetchData} />
+            <SessionUploader volunteerId={volunteerId} onUploadSuccess={triggerRefetch} />
           </div>
           <div className="lg:col-span-2">
             <div className="bg-white p-6 rounded-xl shadow-lg">
-                <h3 className="text-lg font-bold text-gray-900 border-b pb-2 mb-4">Running Sessions</h3>
-                <div className="space-y-4">
-                {sessions.length > 0 ? (
-                    sessions.map(session => <SessionListItem key={session.id} session={session} onLabelChange={handleLabelChange} onDelete={handleDeleteSession} />)
-                ) : (
-                    <p className="text-sm text-gray-500 text-center py-12">No sessions have been uploaded for this volunteer yet.</p>
-                )}
+                <div className="flex flex-wrap justify-between items-center border-b pb-4 mb-4 gap-4">
+                  <h3 className="text-lg font-bold text-gray-900">Running Sessions</h3>
+                  <div className="flex items-center gap-x-4 gap-y-2 flex-wrap">
+                    {selectedSessions.size > 0 && (
+                      <button 
+                        onClick={handleDeleteSelected}
+                        className="flex items-center gap-1.5 text-sm font-semibold text-white bg-red-600 hover:bg-red-700 rounded-md px-3 py-2"
+                      >
+                        <TrashIcon className="w-4 h-4"/>
+                        Delete ({selectedSessions.size})
+                      </button>
+                    )}
+                    <div className="flex items-center gap-2">
+                        <label htmlFor="pageSize" className="text-sm font-medium text-gray-700">Show:</label>
+                        <select
+                            id="pageSize"
+                            name="pageSize"
+                            value={pageSize}
+                            onChange={handlePageSizeChange}
+                            className="h-full rounded-md border-gray-300 py-2 pl-3 pr-7 text-gray-700 focus:outline-none focus:ring-2 focus:ring-sky-500 sm:text-sm"
+                        >
+                            {pageSizeOptions.map(option => (
+                                <option key={option} value={option}>
+                                    {option === 'all' ? 'All' : option}
+                                </option>
+                            ))}
+                        </select>
+                    </div>
+                    <div className="relative" ref={sortDropdownRef}>
+                      <button onClick={() => setIsSortOpen(!isSortOpen)} className="flex items-center gap-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md px-4 py-2 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-sky-500">
+                        <ArrowsUpDownIcon className="w-4 h-4 text-gray-400"/>
+                        <span>Sort: {currentSortLabel} </span>
+                        <span className={`font-semibold ${sortDirection === 'asc' ? 'text-blue-600' : 'text-red-600'}`}>
+                          ({sortDirection === 'asc' ? 'Asc' : 'Desc'})
+                        </span>
+                      </button>
+                      {isSortOpen && (
+                        <div className="absolute right-0 mt-2 w-56 bg-white rounded-md shadow-lg z-20 border">
+                          <div className="py-1">
+                            {sortOptions.map(option => (
+                              <button
+                                key={option.value}
+                                onClick={() => handleSortChange(option.value)}
+                                className={`w-full text-left flex items-center px-4 py-2 text-sm hover:bg-gray-100 ${sortBy === option.value ? 'font-bold text-sky-600' : 'text-gray-700'}`}
+                              >
+                                {option.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="relative">
+                  {isRefreshing && (
+                    <div className="absolute inset-0 bg-white/80 flex items-center justify-center z-10 rounded-lg">
+                      <LoadingSpinner />
+                    </div>
+                  )}
+                  <div className="space-y-4">
+                    {sessionsWithDerivedStats.length > 0 && (
+                      <div className="flex items-center pb-2">
+                        <input
+                          type="checkbox"
+                          className="h-5 w-5 rounded border-gray-300 text-sky-600 focus:ring-sky-500"
+                          checked={isAllSelected}
+                          onChange={handleSelectAll}
+                          ref={el => el && (el.indeterminate = selectedSessions.size > 0 && !isAllSelected)}
+                        />
+                        <label className="ml-3 text-sm font-medium text-gray-700">Select All on Page</label>
+                      </div>
+                    )}
+                    {sessionsWithDerivedStats.length > 0 ? (
+                        sessionsWithDerivedStats.map(session => (
+                          <SessionListItem 
+                            key={session.id} 
+                            session={session} 
+                            onDelete={handleSingleDelete} 
+                            sortBy={sortBy}
+                            isSelected={selectedSessions.has(session.id)}
+                            onSelect={handleSelectSession}
+                            onReuploadSuccess={triggerRefetch}
+                          />
+                        ))
+                    ) : (
+                        <p className="text-sm text-gray-500 text-center py-12">No sessions have been uploaded for this volunteer yet.</p>
+                    )}
+                  </div>
+                  <PaginationControls 
+                    paginationInfo={paginationInfo}
+                    currentPage={currentPage}
+                    onPageChange={handlePageChange}
+                    pageSize={pageSize}
+                  />
                 </div>
             </div>
           </div>
