@@ -157,6 +157,7 @@ const StatItem = ({ icon, value, isSorted = false }) => (
   </div>
 );
 
+// --- MODIFIED SessionListItem ---
 const SessionListItem = ({ session, onDelete, sortBy, isSelected, onSelect, onReuploadSuccess }) => {
   const navigate = useNavigate();
   const { authToken } = useAuth();
@@ -221,11 +222,21 @@ const SessionListItem = ({ session, onDelete, sortBy, isSelected, onSelect, onRe
             </div>
           </div>
         </div>
-        <div className="flex items-center space-x-1">
-            <button onClick={() => navigate(`/sessions/${session.id}`)} className="p-1.5 rounded-md hover:bg-sky-100 text-gray-400 hover:text-sky-600" title="Go to Session Detail Page">
-                <ArrowTopRightOnSquareIcon className="w-4 h-4" />
+        {/* --- MODIFIED --- This block is updated to add the new button */}
+        <div className="flex items-center space-x-2">
+            <button 
+                onClick={() => navigate(`/sessions/${session.id}`)} 
+                className="flex items-center gap-2 text-sm font-semibold text-white bg-sky-600 hover:bg-sky-700 rounded-md px-3 py-1.5 shadow-sm" 
+                title="View & Label Session"
+            >
+                <PencilSquareIcon className="w-4 h-4" />
+                <span>View & Label</span>
             </button>
-            <button onClick={(e) => { e.stopPropagation(); onDelete(session.id); }} className="p-1.5 rounded-md hover:bg-red-100 text-gray-400 hover:text-red-600" title="Delete Session">
+            <button 
+                onClick={(e) => { e.stopPropagation(); onDelete(session.id); }} 
+                className="p-1.5 rounded-md hover:bg-red-100 text-gray-400 hover:text-red-600" 
+                title="Delete Session"
+            >
                 <TrashIcon className="w-4 h-4" />
             </button>
         </div>

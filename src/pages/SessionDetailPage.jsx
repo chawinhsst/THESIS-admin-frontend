@@ -1,5 +1,5 @@
 import { useLoaderData, useNavigate } from 'react-router-dom';
-import { useMemo, useState, useEffect, useRef } from 'react';
+import { useMemo, useState, useEffect, useRef, useLayoutEffect } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Brush, ReferenceLine } from 'recharts';
 import {
@@ -85,7 +85,6 @@ const formatPace = (speedInMps) => {
   return `${paceMinutes}:${paceSeconds.toString().padStart(2, '0')} /km`;
 };
 
-// New function to format dates as "DD Mon YYYY"
 const formatDate = (dateString) => {
     if (!dateString) return 'N/A';
     const date = new Date(dateString);
@@ -169,20 +168,19 @@ const chartableParams = [
   { key: 'enhanced_altitude', label: 'Enhanced Altitude', unit: 'm', color: '#10b981' },
 ];
 
-// --- ENHANCED CHART COMPONENT ---
-const HeartRateChart = ({ session }) => {
+const HeartRateChart = ({ session, timeseriesData }) => {
   const [visibleParams, setVisibleParams] = useState(new Set());
   const [activeDomain, setActiveDomain] = useState(null);
   const [brushKey, setBrushKey] = useState(0);
 
   const chartData = useMemo(() => {
-    if (!session?.timeseries_data || session.timeseries_data.length === 0) return [];
-    const startTime = new Date(session.timeseries_data[0].timestamp).getTime();
-    return session.timeseries_data.map(d => ({
+    if (!timeseriesData || timeseriesData.length === 0) return [];
+    const startTime = new Date(timeseriesData[0].timestamp).getTime();
+    return timeseriesData.map(d => ({
       ...d,
       elapsed_time: (new Date(d.timestamp).getTime() - startTime) / 1000,
     }));
-  }, [session]);
+  }, [timeseriesData]);
 
   const { hrDomain } = useMemo(() => {
     if (chartData.length === 0) return { hrDomain: ['auto', 'auto'] };
@@ -235,16 +233,23 @@ const HeartRateChart = ({ session }) => {
             <li style={{ color: '#ef4444' }}>
               {`Heart Rate: ${dataPoint.heart_rate != null ? dataPoint.heart_rate.toFixed(1) : 'N/A'} bpm`}
             </li>
+            {/* --- MODIFIED CODE START --- */}
+            {dataPoint.anomaly != null && (
+              <li style={{ color: dataPoint.anomaly === 1 ? '#dc2626' : '#6b7280', fontWeight: 'bold' }}>
+                {`Anomaly: ${dataPoint.anomaly}`}
+              </li>
+            )}
+            {/* --- MODIFIED CODE END --- */}
             {chartableParams.map(param => {
-              if (visibleParams.has(param.key)) {
-                const value = dataPoint[param.key];
-                return (
-                  <li key={param.key} style={{ color: param.color }}>
-                    {`${param.label}: ${value != null ? value.toFixed(1) : 'N/A'}`}
-                  </li>
-                );
-              }
-              return null;
+                if (visibleParams.has(param.key) && param.key !== 'anomaly') {
+                  const value = dataPoint[param.key];
+                  return (
+                    <li key={param.key} style={{ color: param.color }}>
+                      {`${param.label}: ${value != null ? value.toFixed(1) : 'N/A'}`}
+                    </li>
+                  );
+                }
+                return null;
             })}
           </ul>
         </div>
@@ -376,27 +381,41 @@ export default function SessionDetailPage() {
   const parentRef = useRef(null);
   
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
-  const [visibleColumns, setVisibleColumns] = useState(['timestamp', 'heart_rate', 'speed', 'cadence', 'power', 'altitude']);
+  const [visibleColumns, setVisibleColumns] = useState(['timestamp', 'anomaly', 'heart_rate', 'speed', 'distance']);
 
-  const hasTimeseries = session.timeseries_data && session.timeseries_data.length > 0;
+  const timestampHeaderRef = useRef(null);
+  const [timestampColWidth, setTimestampColWidth] = useState(0);
+
+  const normalizedTimeseriesData = useMemo(() => {
+    if (!session.timeseries_data) return [];
+    return session.timeseries_data.map(row => {
+        const newRow = {};
+        for (const key in row) {
+            newRow[key.toLowerCase()] = row[key];
+        }
+        return newRow;
+    });
+  }, [session.timeseries_data]);
+
+  const hasTimeseries = normalizedTimeseriesData && normalizedTimeseriesData.length > 0;
   
   const runDate = hasTimeseries
-    ? new Date(session.timeseries_data[0].timestamp)
+    ? new Date(normalizedTimeseriesData[0].timestamp)
     : new Date(session.session_date);
 
   const derivedStats = useMemo(() => {
     if (!hasTimeseries) return {};
-    const heartRates = session.timeseries_data.map(r => r.heart_rate).filter(hr => hr != null);
-    const speeds = session.timeseries_data.map(r => r.speed).filter(s => s != null && s > 0.1);
+    const heartRates = normalizedTimeseriesData.map(r => r.heart_rate).filter(hr => hr != null);
+    const speeds = normalizedTimeseriesData.map(r => r.speed).filter(s => s != null && s > 0.1);
     const minHeartRate = heartRates.length ? Math.min(...heartRates) : null;
     const fastestSpeed = speeds.length ? Math.max(...speeds) : null;
     const slowestSpeed = speeds.length ? Math.min(...speeds) : null;
     const avgSpeed = speeds.length ? speeds.reduce((a, b) => a + b, 0) / speeds.length : null;
     let totalAscent = 0;
     let totalDescent = 0;
-    for (let i = 1; i < session.timeseries_data.length; i++) {
-      const prevAlt = session.timeseries_data[i-1].altitude;
-      const currentAlt = session.timeseries_data[i].altitude;
+    for (let i = 1; i < normalizedTimeseriesData.length; i++) {
+      const prevAlt = normalizedTimeseriesData[i-1].altitude;
+      const currentAlt = normalizedTimeseriesData[i].altitude;
       if (prevAlt != null && currentAlt != null) {
         const diff = currentAlt - prevAlt;
         if (diff > 0) totalAscent += diff;
@@ -411,13 +430,17 @@ export default function SessionDetailPage() {
       totalAscent: Math.round(totalAscent),
       totalDescent: Math.round(totalDescent),
     };
-  }, [hasTimeseries, session.timeseries_data]);
-
+  }, [hasTimeseries, normalizedTimeseriesData]);
 
   const allTableHeaders = useMemo(() => {
     if (!hasTimeseries) return [];
     const allKeys = new Set();
-    session.timeseries_data.forEach(row => Object.keys(row).forEach(key => allKeys.add(key)));
+    normalizedTimeseriesData.forEach(row => Object.keys(row).forEach(key => allKeys.add(key)));
+    
+    if (!allKeys.has('anomaly')) {
+      allKeys.add('anomaly');
+    }
+
     const headers = Array.from(allKeys);
     const tsIndex = headers.indexOf('timestamp');
     if (tsIndex > -1) {
@@ -425,7 +448,15 @@ export default function SessionDetailPage() {
       headers.unshift(tsHeader);
     }
     return headers;
-  }, [hasTimeseries, session.timeseries_data]);
+  }, [hasTimeseries, normalizedTimeseriesData]);
+  
+  useLayoutEffect(() => {
+    if (timestampHeaderRef.current) {
+      setTimestampColWidth(timestampHeaderRef.current.offsetWidth);
+    } else {
+      setTimestampColWidth(0);
+    }
+  }, [visibleColumns]);
 
   const handleColumnToggle = (header) => {
     setVisibleColumns(prev => 
@@ -444,7 +475,7 @@ export default function SessionDetailPage() {
   }, [dropdownRef]);
   
   const rowVirtualizer = useVirtualizer({
-    count: hasTimeseries ? session.timeseries_data.length : 0,
+    count: hasTimeseries ? normalizedTimeseriesData.length : 0,
     getScrollElement: () => parentRef.current,
     estimateSize: () => 36,
     overscan: 10,
@@ -507,7 +538,7 @@ export default function SessionDetailPage() {
       
       <div className="grid grid-cols-1 gap-8 mt-8">
         {hasTimeseries ? (
-          <HeartRateChart session={session} />
+          <HeartRateChart session={session} timeseriesData={normalizedTimeseriesData} />
         ) : (
           <div className="bg-white p-6 rounded-xl shadow-lg">
             <h3 className="text-lg font-bold text-gray-900 mb-4">Performance Chart</h3>
@@ -532,7 +563,13 @@ export default function SessionDetailPage() {
                     <div className="py-1">
                       {allTableHeaders.map(header => (
                         <label key={header} className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 cursor-pointer">
-                          <input type="checkbox" className="h-4 w-4 rounded border-gray-300 text-sky-600 focus:ring-sky-500" checked={visibleColumns.includes(header)} onChange={() => handleColumnToggle(header)} disabled={header === 'timestamp'}/>
+                          <input
+                            type="checkbox"
+                            className="h-4 w-4 rounded border-gray-300 text-sky-600 focus:ring-sky-500"
+                            checked={visibleColumns.includes(header)}
+                            onChange={() => handleColumnToggle(header)}
+                            disabled={header === 'timestamp' || header === 'anomaly'}
+                          />
                           <span className="ml-3">{formatHeader(header)}</span>
                         </label>
                       ))}
@@ -548,24 +585,61 @@ export default function SessionDetailPage() {
               <table className="min-w-full text-sm text-left text-gray-500 table-auto">
                 <thead className="text-xs text-gray-700 uppercase bg-gray-50 sticky top-0 z-10">
                   <tr>
-                    {visibleColumns.map(header => (
-                      <th key={header} scope="col" className={`px-6 py-3 ${header === 'timestamp' ? 'sticky left-0 bg-gray-50' : ''}`}>
-                        {formatHeader(header)}
-                      </th>
-                    ))}
+                    {visibleColumns.map(header => {
+                      const isTimestamp = header === 'timestamp';
+                      const isAnomaly = header === 'anomaly';
+                      const isTimestampVisible = visibleColumns.includes('timestamp');
+                      
+                      let thClasses = 'px-6 py-3';
+                      let thStyle = {};
+
+                      if (isTimestamp) {
+                        thClasses += ' sticky left-0 bg-gray-50 z-20';
+                      } else if (isAnomaly) {
+                        thClasses += ' sticky z-10 bg-gray-50 border-l';
+                        thStyle = { left: isTimestampVisible ? `${timestampColWidth}px` : '0px' };
+                      }
+
+                      return (
+                        <th key={header} ref={isTimestamp ? timestampHeaderRef : null} scope="col" className={thClasses} style={thStyle}>
+                          {formatHeader(header)}
+                        </th>
+                      );
+                    })}
                   </tr>
                 </thead>
                 <tbody>
                   {paddingTop > 0 && ( <tr><td colSpan={visibleColumns.length} style={{ height: `${paddingTop}px` }} /></tr> )}
                   {virtualItems.map(virtualRow => {
-                    const row = session.timeseries_data[virtualRow.index];
+                    const row = normalizedTimeseriesData[virtualRow.index];
                     return (
                       <tr key={virtualRow.index} className="hover:bg-gray-50">
-                        {visibleColumns.map(header => (
-                          <td key={header} className={`px-6 py-2 font-medium text-gray-900 whitespace-nowrap overflow-hidden text-ellipsis border-b ${header === 'timestamp' ? 'sticky left-0 bg-white hover:bg-gray-50' : 'bg-white'}`}>
-                            {header === 'timestamp' && row[header] ? new Date(row[header]).toLocaleTimeString() : String(row[header] ?? 'N/A')}
-                          </td>
-                        ))}
+                        {visibleColumns.map(header => {
+                          const isTimestamp = header === 'timestamp';
+                          const isAnomaly = header === 'anomaly';
+                          const isTimestampVisible = visibleColumns.includes('timestamp');
+
+                          let tdClasses = 'px-6 py-2 font-medium text-gray-900 whitespace-nowrap overflow-hidden text-ellipsis border-b';
+                          let tdStyle = {};
+                          
+                          if (isTimestamp) {
+                            tdClasses += ' sticky left-0 bg-white hover:bg-gray-50 z-10';
+                          } else if (isAnomaly) {
+                            tdClasses += ' sticky bg-white hover:bg-gray-50 border-l';
+                            tdStyle = { left: isTimestampVisible ? `${timestampColWidth}px` : '0px' };
+                          } else {
+                            tdClasses += ' bg-white';
+                          }
+
+                          return (
+                            <td key={header} className={tdClasses} style={tdStyle}>
+                              {header === 'timestamp' && row[header]
+                                ? new Date(row[header]).toLocaleTimeString()
+                                : String(row[header] ?? (header === 'anomaly' ? 0 : 'N/A'))
+                              }
+                            </td>
+                          );
+                        })}
                       </tr>
                     );
                   })}
