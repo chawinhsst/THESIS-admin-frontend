@@ -1,7 +1,7 @@
-import { useLoaderData, useNavigate } from 'react-router-dom';
+import { useLoaderData, useNavigate, Link } from 'react-router-dom';
 import { useMemo, useState, useEffect, useRef, useLayoutEffect } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Brush, ReferenceLine } from 'recharts';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Brush, ReferenceLine, Dot } from 'recharts';
 import {
     ArrowLeftIcon,
     CalendarIcon,
@@ -19,6 +19,11 @@ import {
     ArrowTrendingDownIcon,
     CloudArrowUpIcon,
     ArrowPathIcon,
+    CheckCircleIcon,
+    ArrowsUpDownIcon,
+    ChevronLeftIcon,
+    ChevronRightIcon,
+    ArrowsPointingOutIcon,
 } from '@heroicons/react/24/outline';
 import { useAuth } from '../context/AuthContext';
 import { getAuthToken } from '../utils/auth';
@@ -168,29 +173,73 @@ const chartableParams = [
   { key: 'enhanced_altitude', label: 'Enhanced Altitude', unit: 'm', color: '#10b981' },
 ];
 
-const HeartRateChart = ({ session, timeseriesData }) => {
-  const [visibleParams, setVisibleParams] = useState(new Set());
-  const [activeDomain, setActiveDomain] = useState(null);
-  const [brushKey, setBrushKey] = useState(0);
+const AnomalyBar = ({ data, margin, onNavigate, totalDuration }) => {
+  if (!data || data.length === 0) return null;
 
-  const chartData = useMemo(() => {
-    if (!timeseriesData || timeseriesData.length === 0) return [];
+  const handleClick = (e) => {
+    const bar = e.currentTarget;
+    const rect = bar.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    const percent = clickX / rect.width;
+    const clickedTime = totalDuration * percent;
+
+    const startTime = Math.max(0, clickedTime - 30);
+    const endTime = Math.min(totalDuration, clickedTime + 30);
+
+    const startIndex = data.findIndex(d => d.elapsed_time >= startTime);
+    let endIndex = data.findIndex(d => d.elapsed_time >= endTime);
+    if (endIndex === -1) endIndex = data.length - 1;
+
+    onNavigate({ startIndex, endIndex });
+  };
+
+  return (
+    <div className="w-full h-4 flex mb-2 rounded-full overflow-hidden bg-gray-200 cursor-pointer" style={{ paddingLeft: margin.left, paddingRight: margin.right }} onClick={handleClick}>
+      <div className="w-full h-full flex">
+        {data.map((d, i) => (
+          <div
+            key={i}
+            className={`h-full flex-grow ${d.anomaly === 1 ? 'bg-red-500' : 'bg-transparent'}`}
+            title={`Time: ${formatDuration(d.elapsed_time)}, Anomaly: ${d.anomaly}`}
+          />
+        ))}
+      </div>
+    </div>
+  );
+};
+
+const HeartRateChart = ({ session, timeseriesData, onAnomalyToggle, activeDomain, setActiveDomain, brushKey, onResetZoom, chartHeight }) => {
+  const [visibleParams, setVisibleParams] = useState(new Set());
+  
+  const chartMargin = { top: 5, right: 30, left: 20, bottom: 60 };
+
+  const { chartData, hrDomain, hasHeartRateData } = useMemo(() => {
+    if (!timeseriesData || timeseriesData.length === 0) {
+      return { chartData: [], hrDomain: ['auto', 'auto'], hasHeartRateData: false };
+    }
+    
+    const heartRates = timeseriesData.map(d => d.heart_rate).filter(hr => hr != null);
+    let domain = [60, 180];
+    let hasData = false;
+    let midPoint = 120;
+
+    if (heartRates.length > 0) {
+      const minHr = Math.min(...heartRates);
+      const maxHr = Math.max(...heartRates);
+      domain = [Math.floor(minHr - 5), Math.ceil(maxHr + 10)];
+      midPoint = (minHr + maxHr) / 2;
+      hasData = true;
+    }
+
     const startTime = new Date(timeseriesData[0].timestamp).getTime();
-    return timeseriesData.map(d => ({
+    const data = timeseriesData.map(d => ({
       ...d,
       elapsed_time: (new Date(d.timestamp).getTime() - startTime) / 1000,
+      hover_target: midPoint,
     }));
-  }, [timeseriesData]);
 
-  const { hrDomain } = useMemo(() => {
-    if (chartData.length === 0) return { hrDomain: ['auto', 'auto'] };
-    const heartRates = chartData.map(d => d.heart_rate).filter(hr => hr != null);
-    const minHr = heartRates.length ? Math.min(...heartRates) : 0;
-    const maxHr = heartRates.length ? Math.max(...heartRates) : 100;
-    return {
-      hrDomain: [Math.floor(minHr - 5), Math.ceil(maxHr + 10)],
-    };
-  }, [chartData]);
+    return { chartData: data, hrDomain: domain, hasHeartRateData: hasData };
+  }, [timeseriesData]);
 
   const xAxisDomain = useMemo(() => {
       if (!activeDomain || !chartData.length) {
@@ -204,6 +253,17 @@ const HeartRateChart = ({ session, timeseriesData }) => {
       return ['dataMin', 'dataMax'];
   }, [activeDomain, chartData]);
 
+  const handleChartClick = (e) => {
+    if (!e || e.activeTooltipIndex == null) return;
+
+    const clickedIndex = e.activeTooltipIndex;
+    const dataPoint = chartData[clickedIndex];
+
+    if (dataPoint && dataPoint.heart_rate != null) {
+      onAnomalyToggle(clickedIndex);
+    }
+  };
+
   const toggleParam = (paramKey) => {
     setVisibleParams(prev => {
       const newSet = new Set(prev);
@@ -212,13 +272,16 @@ const HeartRateChart = ({ session, timeseriesData }) => {
     });
   };
 
-  const handleZoom = (domain) => {
-    setActiveDomain(domain);
-  };
+  const renderConditionalDot = (props) => {
+    const { cx, cy, payload, key } = props;
 
-  const resetZoom = () => {
-    setActiveDomain(null);
-    setBrushKey(prevKey => prevKey + 1); 
+    if (payload.heart_rate == null) {
+      return null;
+    }
+
+    const dotColor = payload.anomaly === 1 ? '#ef4444' : '#22c55e';
+    
+    return <Dot key={key} cx={cx} cy={cy} r={3} fill={dotColor} stroke="#fff" strokeWidth={1} />;
   };
 
   const CustomTooltip = ({ active, payload, label }) => {
@@ -233,13 +296,11 @@ const HeartRateChart = ({ session, timeseriesData }) => {
             <li style={{ color: '#ef4444' }}>
               {`Heart Rate: ${dataPoint.heart_rate != null ? dataPoint.heart_rate.toFixed(1) : 'N/A'} bpm`}
             </li>
-            {/* --- MODIFIED CODE START --- */}
             {dataPoint.anomaly != null && (
               <li style={{ color: dataPoint.anomaly === 1 ? '#dc2626' : '#6b7280', fontWeight: 'bold' }}>
                 {`Anomaly: ${dataPoint.anomaly}`}
               </li>
             )}
-            {/* --- MODIFIED CODE END --- */}
             {chartableParams.map(param => {
                 if (visibleParams.has(param.key) && param.key !== 'anomaly') {
                   const value = dataPoint[param.key];
@@ -257,6 +318,19 @@ const HeartRateChart = ({ session, timeseriesData }) => {
     }
     return null;
   };
+  
+  const noData = !hasHeartRateData && visibleParams.size === 0;
+
+  const CustomBrushHandle = (props) => {
+    const { x, y, width, height, type } = props;
+    const handleY = y + height / 2 - 8;
+    const handleX = type === 'start' ? x - 4 : x + width - 4;
+    return (
+      <g transform={`translate(${handleX}, ${handleY})`}>
+        <path d="M 4 0 L 4 16 M 2 2 L 2 14 M 6 2 L 6 14" stroke="#666" fill="none" strokeWidth="1" />
+      </g>
+    );
+  };
 
   return (
     <div className="bg-white p-4 sm:p-6 rounded-xl shadow-lg">
@@ -265,15 +339,11 @@ const HeartRateChart = ({ session, timeseriesData }) => {
           <ChartBarIcon className="w-6 h-6 text-sky-600"/>
           <h3 className="text-lg font-bold text-gray-900">Interactive Performance Chart</h3>
         </div>
-        {activeDomain && (
-          <button
-            onClick={resetZoom}
-            className="flex items-center gap-1.5 rounded-md bg-sky-100 px-3 py-1.5 text-xs font-semibold text-sky-700 shadow-sm hover:bg-sky-200"
-          >
-            <ArrowPathIcon className="w-4 h-4" />
-            Reset Zoom
-          </button>
-        )}
+        {/* --- ADDED THIS BUTTON --- */}
+        <Link to={`/sessions/${session.id}/chart`} className="flex items-center gap-2 text-sm font-medium text-sky-600 hover:text-sky-800 border px-3 py-1.5 rounded-md hover:bg-sky-50 transition-colors">
+            <ArrowsPointingOutIcon className="w-4 h-4" />
+            Focus Chart
+        </Link>
       </div>
       
       <div className="mb-4">
@@ -294,9 +364,21 @@ const HeartRateChart = ({ session, timeseriesData }) => {
         </div>
       </div>
       
-      <div style={{ width: '100%', height: 450 }}>
+      <AnomalyBar data={chartData} margin={chartMargin} onNavigate={setActiveDomain} totalDuration={chartData[chartData.length - 1]?.elapsed_time || 0} />
+      
+      <div style={{ width: '100%', height: chartHeight, position: 'relative' }}>
+        {noData && (
+          <div className="absolute inset-0 flex items-center justify-center bg-gray-50/50 z-30">
+            <p className="text-gray-500 font-medium">Heart Rate data is not available for this session.</p>
+          </div>
+        )}
         <ResponsiveContainer>
-          <LineChart data={chartData} margin={{ top: 5, right: 30, left: 10, bottom: 60 }}>
+          <LineChart
+            data={chartData}
+            margin={chartMargin}
+            onClick={handleChartClick}
+            style={{ cursor: noData ? 'default' : 'pointer' }}
+          >
             <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
             
             <XAxis 
@@ -320,20 +402,38 @@ const HeartRateChart = ({ session, timeseriesData }) => {
               <YAxis yAxisId="right" orientation="right" stroke="#0ea5e9" />
             )}
             
-            <Tooltip content={<CustomTooltip />} cursor={{ stroke: '#38bdf8', strokeWidth: 1, strokeDasharray: '3 3' }}/>
+            <Tooltip
+              content={<CustomTooltip />}
+              cursor={{ stroke: '#38bdf8', strokeWidth: 1, strokeDasharray: '3 3' }}
+              wrapperStyle={{ zIndex: 100 }}
+            />
+
             <Legend verticalAlign="top" wrapperStyle={{paddingBottom: '20px'}} />
             
-            <ReferenceLine yAxisId="left" y={session.avg_heart_rate} label={{ value: `Avg: ${session.avg_heart_rate}`, position: 'insideTopLeft', fill: '#6b7280', fontSize: '10px' }} stroke="#fb923c" strokeDasharray="4 4" />
-            <ReferenceLine yAxisId="left" y={session.max_heart_rate} label={{ value: `Max: ${session.max_heart_rate}`, position: 'insideTopLeft', fill: '#6b7280', fontSize: '10px' }} stroke="#f87171" strokeDasharray="4 4" />
+            {hasHeartRateData && (
+              <>
+                <ReferenceLine yAxisId="left" y={session.avg_heart_rate} label={{ value: `Avg: ${session.avg_heart_rate}`, position: 'insideTopLeft', fill: '#6b7280', fontSize: '10px' }} stroke="#fb923c" strokeDasharray="4 4" />
+                <ReferenceLine yAxisId="left" y={session.max_heart_rate} label={{ value: `Max: ${session.max_heart_rate}`, position: 'insideTopLeft', fill: '#6b7280', fontSize: '10px' }} stroke="#f87171" strokeDasharray="4 4" />
+              </>
+            )}
+            
+            <Line
+              yAxisId="left"
+              dataKey="hover_target"
+              stroke="transparent"
+              activeDot={{ r: 8, fill: 'transparent', stroke: 'transparent' }}
+              dot={false}
+              hide={true}
+            />
 
             <Line 
               yAxisId="left" 
-              type="monotone" 
+              type="linear" 
               dataKey="heart_rate" 
               name="Heart Rate (bpm)" 
               stroke="#ef4444"
               strokeWidth={2.5} 
-              dot={false} 
+              dot={renderConditionalDot}
               connectNulls
             />
 
@@ -357,10 +457,12 @@ const HeartRateChart = ({ session, timeseriesData }) => {
                 dataKey="elapsed_time" 
                 height={30} 
                 stroke="#38bdf8" 
-                onChange={handleZoom}
+                onChange={setActiveDomain}
                 tickFormatter={formatDuration}
                 startIndex={activeDomain?.startIndex}
                 endIndex={activeDomain?.endIndex}
+                traveller={<CustomBrushHandle />}
+                alwaysShowText={true}
             >
                 <LineChart>
                      <Line type="monotone" dataKey="heart_rate" stroke="#ef4444" dot={false} connectNulls />
@@ -373,10 +475,190 @@ const HeartRateChart = ({ session, timeseriesData }) => {
   );
 };
 
+const ChartControls = ({ activeDomain, onProgrammaticDomainChange, onResetZoom, chartData, chartHeight, setChartHeight }) => {
+  const [startTime, setStartTime] = useState('');
+  const [endTime, setEndTime] = useState('');
+  const [splitCount, setSplitCount] = useState('');
+  const [splitSeconds, setSplitSeconds] = useState('');
+  const [currentSegment, setCurrentSegment] = useState(0);
+  const [totalSegments, setTotalSegments] = useState(0);
+
+  const totalDuration = chartData.length > 0 ? chartData[chartData.length - 1].elapsed_time : 0;
+
+  const parseTimeToSeconds = (timeStr) => {
+    const parts = timeStr.split(':').map(Number);
+    if (parts.some(isNaN) || parts.length === 0 || parts.length > 3) return null;
+    let seconds = 0;
+    if (parts.length === 3) { // HH:MM:SS
+      seconds = parts[0] * 3600 + parts[1] * 60 + parts[2];
+    } else if (parts.length === 2) { // MM:SS
+      seconds = parts[0] * 60 + parts[1];
+    } else { // SS
+      seconds = parts[0];
+    }
+    return seconds;
+  };
+
+  const handleApplyTime = () => {
+    const startSeconds = parseTimeToSeconds(startTime);
+    const endSeconds = parseTimeToSeconds(endTime);
+
+    if (startSeconds == null || endSeconds == null || startSeconds >= endSeconds) {
+      alert("Invalid time format or range. Please use HH:MM:SS, MM:SS, or SS.");
+      return;
+    }
+    
+    const startIndex = chartData.findIndex(d => d.elapsed_time >= startSeconds);
+    let endIndex = chartData.findIndex(d => d.elapsed_time >= endSeconds);
+    if (endIndex === -1) endIndex = chartData.length - 1;
+
+    if (startIndex > -1) {
+      onProgrammaticDomainChange({ startIndex, endIndex });
+      setSplitCount('');
+      setSplitSeconds('');
+      setTotalSegments(0);
+    }
+  };
+
+  const applySegment = (segmentIndex, segmentDuration) => {
+    const startSeconds = segmentIndex * segmentDuration;
+    const endSeconds = Math.min((segmentIndex + 1) * segmentDuration, totalDuration);
+    
+    const startIndex = chartData.findIndex(d => d.elapsed_time >= startSeconds);
+    if (startIndex === -1) return;
+    
+    let endIndex = chartData.findIndex(d => d.elapsed_time >= endSeconds);
+    if (endIndex === -1) {
+      endIndex = chartData.length - 1;
+    }
+    
+    onProgrammaticDomainChange({ startIndex, endIndex });
+    setCurrentSegment(segmentIndex);
+  };
+
+  const handleSplit = (type) => {
+    let segmentDuration = 0;
+    let numSegments = 0;
+
+    if (type === 'count') {
+      const count = parseInt(splitCount);
+      if (!count || count <= 0) return;
+      segmentDuration = totalDuration / count;
+      numSegments = count;
+    } else { // 'seconds'
+      const seconds = parseInt(splitSeconds);
+      if (!seconds || seconds <= 0) return;
+      segmentDuration = seconds;
+      numSegments = Math.ceil(totalDuration / seconds);
+    }
+
+    if (segmentDuration > 0) {
+        setTotalSegments(numSegments);
+        applySegment(0, segmentDuration);
+    }
+  };
+
+  const navigateSegment = (direction) => {
+    const newSegment = currentSegment + direction;
+    let segmentDuration = 0;
+
+    if (splitCount) {
+      segmentDuration = totalDuration / parseInt(splitCount);
+    } else if (splitSeconds) {
+      segmentDuration = parseInt(splitSeconds);
+    }
+    
+    if (segmentDuration > 0 && newSegment >= 0 && newSegment < totalSegments) {
+      applySegment(newSegment, segmentDuration);
+    }
+  };
+  
+  useEffect(() => {
+    if (activeDomain && chartData.length > 0) {
+      const startIndex = activeDomain.startIndex;
+      const endIndex = activeDomain.endIndex;
+
+      if (chartData[startIndex] && chartData[endIndex]) {
+        const start = chartData[startIndex].elapsed_time;
+        const end = chartData[endIndex].elapsed_time;
+        setStartTime(formatDuration(start));
+        setEndTime(formatDuration(end));
+      }
+    } else {
+      setStartTime('00:00');
+      setEndTime(formatDuration(totalDuration));
+    }
+  }, [activeDomain, chartData, totalDuration]);
+
+
+  return (
+    <div className="bg-gray-50 p-4 rounded-b-xl shadow-inner border-t space-y-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-x-6 gap-y-4 items-end">
+        
+        <div className="flex items-end gap-2">
+          <div>
+            <label htmlFor="start-time" className="block text-xs font-medium text-gray-600">Start Time</label>
+            <input type="text" id="start-time" value={startTime} onChange={e => setStartTime(e.target.value)} className="mt-1 block w-full rounded-md border-gray-300 shadow-sm text-sm" placeholder="MM:SS" />
+          </div>
+          <div>
+            <label htmlFor="end-time" className="block text-xs font-medium text-gray-600">End Time</label>
+            <input type="text" id="end-time" value={endTime} onChange={e => setEndTime(e.target.value)} className="mt-1 block w-full rounded-md border-gray-300 shadow-sm text-sm" placeholder="MM:SS" />
+          </div>
+          <button onClick={handleApplyTime} className="rounded-md bg-sky-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-sky-700">Apply</button>
+          <button onClick={onResetZoom} className="p-2 rounded-md hover:bg-gray-200" title="Reset Zoom">
+            <ArrowPathIcon className="w-5 h-5 text-gray-600" />
+          </button>
+        </div>
+
+        <div className="flex items-end gap-2">
+          <div>
+            <label htmlFor="split-count" className="block text-xs font-medium text-gray-600">Split by #</label>
+            <input type="number" id="split-count" value={splitCount} onChange={e => { setSplitCount(e.target.value); setSplitSeconds(''); }} className="mt-1 block w-full rounded-md border-gray-300 shadow-sm text-sm" placeholder="e.g., 10" />
+          </div>
+          <button onClick={() => handleSplit('count')} className="rounded-md bg-gray-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-gray-700 disabled:!splitCount">Split</button>
+          
+          <div className="flex-grow">
+            <label htmlFor="split-seconds" className="block text-xs font-medium text-gray-600">Split by (sec)</label>
+            <input type="number" id="split-seconds" value={splitSeconds} onChange={e => { setSplitSeconds(e.target.value); setSplitCount(''); }} className="mt-1 block w-full rounded-md border-gray-300 shadow-sm text-sm" placeholder="e.g., 30" />
+          </div>
+          <button onClick={() => handleSplit('seconds')} className="rounded-md bg-gray-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-gray-700 disabled:!splitSeconds">Split</button>
+        </div>
+
+        <div className="flex items-end gap-4">
+          <div className="flex-grow">
+            <label htmlFor="chart-height" className="block text-xs font-medium text-gray-600 mb-1">Chart Height: {chartHeight}px</label>
+            <div className="flex items-center gap-2">
+              <ArrowsUpDownIcon className="w-5 h-5 text-gray-400" />
+              <input
+                id="chart-height"
+                type="range"
+                min="300"
+                max="1000"
+                step="10"
+                value={chartHeight}
+                onChange={(e) => setChartHeight(Number(e.target.value))}
+                className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+              />
+            </div>
+          </div>
+          {totalSegments > 0 && (
+            <div className="flex items-center gap-2">
+              <button onClick={() => navigateSegment(-1)} disabled={currentSegment === 0} className="p-2 rounded-md hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"><ChevronLeftIcon className="w-5 h-5" /></button>
+              <span className="text-sm font-medium text-gray-700">{currentSegment + 1} / {totalSegments}</span>
+              <button onClick={() => navigateSegment(1)} disabled={currentSegment >= totalSegments - 1} className="p-2 rounded-md hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"><ChevronRightIcon className="w-5 h-5" /></button>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 
 export default function SessionDetailPage() {
   const session = useLoaderData();
   const navigate = useNavigate();
+  const { authToken } = useAuth();
   const dropdownRef = useRef(null);
   const parentRef = useRef(null);
   
@@ -386,6 +668,27 @@ export default function SessionDetailPage() {
   const timestampHeaderRef = useRef(null);
   const [timestampColWidth, setTimestampColWidth] = useState(0);
 
+  const [interactiveData, setInteractiveData] = useState([]);
+  const [originalData, setOriginalData] = useState([]);
+  const [isSaving, setIsSaving] = useState(false);
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [showOnlyAnomalies, setShowOnlyAnomalies] = useState(false);
+  const [hideNullHeartRate, setHideNullHeartRate] = useState(false);
+  
+  const [activeDomain, setActiveDomain] = useState(null);
+  const [brushKey, setBrushKey] = useState(0);
+  const [chartHeight, setChartHeight] = useState(450);
+
+  const handleProgrammaticDomainChange = (newDomain) => {
+    setActiveDomain(newDomain);
+    setBrushKey(k => k + 1);
+  };
+
+  const handleResetZoom = () => {
+    setActiveDomain(null);
+    setBrushKey(k => k + 1);
+  };
+  
   const normalizedTimeseriesData = useMemo(() => {
     if (!session.timeseries_data) return [];
     return session.timeseries_data.map(row => {
@@ -396,26 +699,47 @@ export default function SessionDetailPage() {
         return newRow;
     });
   }, [session.timeseries_data]);
+  
+  useEffect(() => {
+    const deepCopiedData = JSON.parse(JSON.stringify(normalizedTimeseriesData));
+    setInteractiveData(deepCopiedData);
+    setOriginalData(deepCopiedData);
+    setHasUnsavedChanges(false);
+  }, [normalizedTimeseriesData]);
 
-  const hasTimeseries = normalizedTimeseriesData && normalizedTimeseriesData.length > 0;
+  const filteredData = useMemo(() => {
+    let data = interactiveData.map((row, index) => ({ ...row, originalIndex: index }));
+
+    if (showOnlyAnomalies) {
+      data = data.filter(row => row.anomaly === 1);
+    }
+    
+    if (hideNullHeartRate) {
+      data = data.filter(row => row.heart_rate != null);
+    }
+
+    return data;
+  }, [interactiveData, showOnlyAnomalies, hideNullHeartRate]);
+
+  const hasTimeseries = interactiveData && interactiveData.length > 0;
   
   const runDate = hasTimeseries
-    ? new Date(normalizedTimeseriesData[0].timestamp)
+    ? new Date(interactiveData[0].timestamp)
     : new Date(session.session_date);
 
   const derivedStats = useMemo(() => {
     if (!hasTimeseries) return {};
-    const heartRates = normalizedTimeseriesData.map(r => r.heart_rate).filter(hr => hr != null);
-    const speeds = normalizedTimeseriesData.map(r => r.speed).filter(s => s != null && s > 0.1);
+    const heartRates = interactiveData.map(r => r.heart_rate).filter(hr => hr != null);
+    const speeds = interactiveData.map(r => r.speed).filter(s => s != null && s > 0.1);
     const minHeartRate = heartRates.length ? Math.min(...heartRates) : null;
     const fastestSpeed = speeds.length ? Math.max(...speeds) : null;
     const slowestSpeed = speeds.length ? Math.min(...speeds) : null;
     const avgSpeed = speeds.length ? speeds.reduce((a, b) => a + b, 0) / speeds.length : null;
     let totalAscent = 0;
     let totalDescent = 0;
-    for (let i = 1; i < normalizedTimeseriesData.length; i++) {
-      const prevAlt = normalizedTimeseriesData[i-1].altitude;
-      const currentAlt = normalizedTimeseriesData[i].altitude;
+    for (let i = 1; i < interactiveData.length; i++) {
+      const prevAlt = interactiveData[i-1].altitude;
+      const currentAlt = interactiveData[i].altitude;
       if (prevAlt != null && currentAlt != null) {
         const diff = currentAlt - prevAlt;
         if (diff > 0) totalAscent += diff;
@@ -430,12 +754,12 @@ export default function SessionDetailPage() {
       totalAscent: Math.round(totalAscent),
       totalDescent: Math.round(totalDescent),
     };
-  }, [hasTimeseries, normalizedTimeseriesData]);
+  }, [hasTimeseries, interactiveData]);
 
   const allTableHeaders = useMemo(() => {
     if (!hasTimeseries) return [];
     const allKeys = new Set();
-    normalizedTimeseriesData.forEach(row => Object.keys(row).forEach(key => allKeys.add(key)));
+    interactiveData.forEach(row => Object.keys(row).forEach(key => allKeys.add(key)));
     
     if (!allKeys.has('anomaly')) {
       allKeys.add('anomaly');
@@ -448,7 +772,7 @@ export default function SessionDetailPage() {
       headers.unshift(tsHeader);
     }
     return headers;
-  }, [hasTimeseries, normalizedTimeseriesData]);
+  }, [hasTimeseries, interactiveData]);
   
   useLayoutEffect(() => {
     if (timestampHeaderRef.current) {
@@ -457,6 +781,59 @@ export default function SessionDetailPage() {
       setTimestampColWidth(0);
     }
   }, [visibleColumns]);
+
+  const handleAnomalyToggle = (index) => {
+    if (index == null) return;
+    const newData = [...interactiveData];
+    const record = newData[index];
+    if (record) {
+      record.anomaly = record.anomaly === 1 ? 0 : 1;
+      setInteractiveData(newData);
+      setHasUnsavedChanges(true);
+    }
+  };
+
+  const handleSaveChanges = async () => {
+    setIsSaving(true);
+    const updates = [];
+    for (let i = 0; i < interactiveData.length; i++) {
+      if (originalData[i] && interactiveData[i].anomaly !== originalData[i].anomaly) {
+        updates.push({
+          timestamp: interactiveData[i].timestamp,
+          anomaly: interactiveData[i].anomaly,
+        });
+      }
+    }
+
+    if (updates.length === 0) {
+      alert("No changes to save.");
+      setIsSaving(false);
+      return;
+    }
+    
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/sessions/${session.id}/update-anomalies/`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Token ${authToken}`,
+        },
+        body: JSON.stringify({ updates }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to save changes. Please check the network connection or API endpoint.');
+      }
+      
+      alert('Changes saved successfully!');
+      setOriginalData(JSON.parse(JSON.stringify(interactiveData)));
+      setHasUnsavedChanges(false);
+    } catch (error) {
+      alert(error.message);
+    } finally {
+      setIsSaving(false);
+    }
+  };
 
   const handleColumnToggle = (header) => {
     setVisibleColumns(prev => 
@@ -475,7 +852,7 @@ export default function SessionDetailPage() {
   }, [dropdownRef]);
   
   const rowVirtualizer = useVirtualizer({
-    count: hasTimeseries ? normalizedTimeseriesData.length : 0,
+    count: hasTimeseries ? filteredData.length : 0,
     getScrollElement: () => parentRef.current,
     estimateSize: () => 36,
     overscan: 10,
@@ -538,7 +915,26 @@ export default function SessionDetailPage() {
       
       <div className="grid grid-cols-1 gap-8 mt-8">
         {hasTimeseries ? (
-          <HeartRateChart session={session} timeseriesData={normalizedTimeseriesData} />
+          <div className="bg-white rounded-xl shadow-lg">
+            <HeartRateChart
+              session={session}
+              timeseriesData={interactiveData}
+              onAnomalyToggle={handleAnomalyToggle}
+              activeDomain={activeDomain}
+              setActiveDomain={setActiveDomain}
+              brushKey={brushKey}
+              onResetZoom={handleResetZoom}
+              chartHeight={chartHeight}
+            />
+            <ChartControls
+              activeDomain={activeDomain}
+              onProgrammaticDomainChange={handleProgrammaticDomainChange}
+              onResetZoom={handleResetZoom}
+              chartData={interactiveData}
+              chartHeight={chartHeight}
+              setChartHeight={setChartHeight}
+            />
+          </div>
         ) : (
           <div className="bg-white p-6 rounded-xl shadow-lg">
             <h3 className="text-lg font-bold text-gray-900 mb-4">Performance Chart</h3>
@@ -552,38 +948,71 @@ export default function SessionDetailPage() {
 
         <div className="bg-white p-6 rounded-xl shadow-lg min-w-0">
           <div className="flex justify-between items-center mb-4">
-            <h3 className="text-lg font-bold text-gray-900">Raw Data Table</h3>
-            {hasTimeseries && (
-              <div className="relative" ref={dropdownRef}>
-                <button onClick={() => setIsDropdownOpen(!isDropdownOpen)} className="flex items-center gap-2 text-sm font-medium text-sky-600 hover:text-sky-800 border px-3 py-1 rounded-md hover:bg-sky-50">
-                  Columns <ChevronDownIcon className="w-4 h-4" />
+            <div className="flex items-center gap-4">
+              <h3 className="text-lg font-bold text-gray-900">Raw Data Table</h3>
+              {hasUnsavedChanges && (
+                <button
+                  onClick={handleSaveChanges}
+                  disabled={isSaving}
+                  className="flex items-center gap-1.5 rounded-md bg-sky-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-sky-700 disabled:bg-slate-400 disabled:cursor-not-allowed"
+                >
+                  <CheckCircleIcon className="w-4 h-4" />
+                  {isSaving ? 'Saving...' : 'Save Changes'}
                 </button>
-                {isDropdownOpen && (
-                  <div className="absolute right-0 mt-2 w-56 bg-white rounded-md shadow-lg z-20 border max-h-60 overflow-y-auto">
-                    <div className="py-1">
-                      {allTableHeaders.map(header => (
-                        <label key={header} className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            className="h-4 w-4 rounded border-gray-300 text-sky-600 focus:ring-sky-500"
-                            checked={visibleColumns.includes(header)}
-                            onChange={() => handleColumnToggle(header)}
-                            disabled={header === 'timestamp' || header === 'anomaly'}
-                          />
-                          <span className="ml-3">{formatHeader(header)}</span>
-                        </label>
-                      ))}
+              )}
+            </div>
+            <div className="flex items-center gap-4">
+              <label className="flex items-center text-sm font-medium text-gray-700">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4 rounded border-gray-300 text-sky-600 focus:ring-sky-500"
+                  checked={hideNullHeartRate}
+                  onChange={(e) => setHideNullHeartRate(e.target.checked)}
+                />
+                <span className="ml-2">Hide N/A Heart Rate</span>
+              </label>
+
+              <label className="flex items-center text-sm font-medium text-gray-700">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4 rounded border-gray-300 text-sky-600 focus:ring-sky-500"
+                  checked={showOnlyAnomalies}
+                  onChange={(e) => setShowOnlyAnomalies(e.target.checked)}
+                />
+                <span className="ml-2">Show Only Anomalies</span>
+              </label>
+              {hasTimeseries && (
+                <div className="relative" ref={dropdownRef}>
+                  <button onClick={() => setIsDropdownOpen(!isDropdownOpen)} className="flex items-center gap-2 text-sm font-medium text-sky-600 hover:text-sky-800 border px-3 py-1 rounded-md hover:bg-sky-50">
+                    Columns <ChevronDownIcon className="w-4 h-4" />
+                  </button>
+                  {isDropdownOpen && (
+                    <div className="absolute right-0 mt-2 w-56 bg-white rounded-md shadow-lg z-20 border max-h-60 overflow-y-auto">
+                      <div className="py-1">
+                        {allTableHeaders.map(header => (
+                          <label key={header} className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              className="h-4 w-4 rounded border-gray-300 text-sky-600 focus:ring-sky-500"
+                              checked={visibleColumns.includes(header)}
+                              onChange={() => handleColumnToggle(header)}
+                              disabled={header === 'timestamp' || header === 'anomaly'}
+                            />
+                            <span className="ml-3">{formatHeader(header)}</span>
+                          </label>
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                )}
-              </div>
-            )}
+                  )}
+                </div>
+              )}
+            </div>
           </div>
           
           <div ref={parentRef} className="max-h-96 overflow-auto border rounded-lg relative">
             {hasTimeseries ? (
               <table className="min-w-full text-sm text-left text-gray-500 table-auto">
-                <thead className="text-xs text-gray-700 uppercase bg-gray-50 sticky top-0 z-10">
+                <thead className="text-xs text-gray-700 uppercase bg-gray-50 sticky top-0 z-30">
                   <tr>
                     {visibleColumns.map(header => {
                       const isTimestamp = header === 'timestamp';
@@ -611,7 +1040,7 @@ export default function SessionDetailPage() {
                 <tbody>
                   {paddingTop > 0 && ( <tr><td colSpan={visibleColumns.length} style={{ height: `${paddingTop}px` }} /></tr> )}
                   {virtualItems.map(virtualRow => {
-                    const row = normalizedTimeseriesData[virtualRow.index];
+                    const row = filteredData[virtualRow.index];
                     return (
                       <tr key={virtualRow.index} className="hover:bg-gray-50">
                         {visibleColumns.map(header => {
@@ -633,10 +1062,19 @@ export default function SessionDetailPage() {
 
                           return (
                             <td key={header} className={tdClasses} style={tdStyle}>
-                              {header === 'timestamp' && row[header]
-                                ? new Date(row[header]).toLocaleTimeString()
-                                : String(row[header] ?? (header === 'anomaly' ? 0 : 'N/A'))
-                              }
+                              {isAnomaly ? (
+                                <button
+                                  onClick={() => handleAnomalyToggle(row.originalIndex)}
+                                  className={`h-6 w-6 rounded-full text-white text-xs flex items-center justify-center ${row.anomaly === 1 ? 'bg-red-500 hover:bg-red-600' : 'bg-gray-300 hover:bg-gray-400'}`}
+                                  title={`Click to toggle anomaly status (current: ${row.anomaly})`}
+                                >
+                                  {row.anomaly}
+                                </button>
+                              ) : header === 'timestamp' && row[header] ? (
+                                new Date(row[header]).toLocaleTimeString()
+                              ) : (
+                                String(row[header] ?? 'N/A')
+                              )}
                             </td>
                           );
                         })}

@@ -5,22 +5,22 @@ import LoginPage from './pages/LoginPage';
 import DashboardPage from './pages/DashboardPage';
 import VolunteerListPage from './pages/VolunteerListPage';
 import VolunteerDetailPage from './pages/VolunteerDetailPage';
-// --- Add these imports for the new page ---
 import SessionDetailPage, { loader as sessionDetailLoader } from './pages/SessionDetailPage';
+// --- Add import for the new chart page ---
+import SessionChartPage, { loader as sessionChartLoader } from './pages/SessionChartPage'; 
 import SessionNotFound from './components/SessionNotFound';
 
 
 const router = createBrowserRouter([
   {
     path: '/',
-    element: <App />, // App is the main wrapper providing the context
+    element: <App />,
     children: [
       {
         path: 'login',
         element: <LoginPage />,
       },
       {
-        // All routes nested inside here are protected
         element: <ProtectedRoute />,
         children: [
           {
@@ -35,19 +35,24 @@ const router = createBrowserRouter([
             path: 'volunteers/:volunteerId',
             element: <VolunteerDetailPage />,
           },
-          // --- This is the new route for the session detail page ---
           {
             path: 'sessions/:sessionId',
             element: <SessionDetailPage />,
             loader: sessionDetailLoader,
             errorElement: <SessionNotFound />,
           },
+          // --- This is the new route for the isolated chart page ---
+          {
+            path: 'sessions/:sessionId/chart',
+            element: <SessionChartPage />,
+            loader: sessionChartLoader,
+            errorElement: <SessionNotFound />,
+          },
         ],
       },
       {
-        // If a user visits the root path, redirect them
         index: true,
-        element: <Navigate to="/login" replace />,
+        element: <Navigate to="/dashboard" replace />, // Changed to redirect to dashboard after login
       },
     ],
   },
