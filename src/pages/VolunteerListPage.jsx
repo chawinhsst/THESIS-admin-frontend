@@ -56,7 +56,6 @@ export default function VolunteerListPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
   
-  // --- THIS IS THE CHANGED LINE ---
   const [activeStatus, setActiveStatus] = useState(locationState?.defaultStatus || 'all');
   
   const [searchQuery, setSearchQuery] = useState('');
@@ -175,6 +174,7 @@ export default function VolunteerListPage() {
           </div>
 
           <div className="bg-white rounded-2xl shadow-lg border border-slate-200/80 overflow-hidden">
+            {/* ✅ DESKTOP TABLE: Hidden on small screens, visible on medium and up */}
             <table className="w-full hidden md:table">
               <thead className="bg-slate-100">
                 <tr>
@@ -186,7 +186,7 @@ export default function VolunteerListPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200">
-                { !isLoading && !error && paginatedVolunteers.length > 0 && paginatedVolunteers.map((v) => (
+                {paginatedVolunteers.map((v) => (
                   <tr key={v.id} className="hover:bg-slate-50">
                     <td className="whitespace-nowrap px-6 py-4 text-sm font-semibold text-slate-800">{v.first_name} {v.last_name}</td>
                     <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-600">{v.email}</td>
@@ -194,19 +194,9 @@ export default function VolunteerListPage() {
                     <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-600">{new Date(v.registration_date).toLocaleDateString()}</td>
                     <td className="whitespace-nowrap px-6 py-4">
                       <div className="flex items-center gap-x-4">
-                        <button onClick={() => handleOpenModal(v)} className="p-2 rounded-md text-slate-500 hover:bg-slate-100 hover:text-sky-700" title="Quick View/Edit Status">
-                          <PencilSquareIcon className="h-5 w-5" />
-                        </button>
-                        
-                        {v.status === 'approved' && (
-                          <button onClick={() => goToDetailPage(v.id)} className="p-2 rounded-md text-slate-500 hover:bg-slate-100 hover:text-green-700" title="Go to Volunteer Workspace">
-                            <ArrowTopRightOnSquareIcon className="h-5 w-5" />
-                          </button>
-                        )}
-
-                        <button onClick={() => handleDeleteVolunteer(v.id)} disabled={v.status !== 'pending'} className="p-2 rounded-md text-slate-500 hover:bg-rose-100 hover:text-rose-700 disabled:opacity-50 disabled:cursor-not-allowed" title="Delete Registration">
-                          <TrashIcon className="h-5 w-5" />
-                        </button>
+                        <button onClick={() => handleOpenModal(v)} className="p-2 rounded-md text-slate-500 hover:bg-slate-100 hover:text-sky-700" title="Quick View/Edit Status"><PencilSquareIcon className="h-5 w-5" /></button>
+                        {v.status === 'approved' && (<button onClick={() => goToDetailPage(v.id)} className="p-2 rounded-md text-slate-500 hover:bg-slate-100 hover:text-green-700" title="Go to Volunteer Workspace"><ArrowTopRightOnSquareIcon className="h-5 w-5" /></button>)}
+                        <button onClick={() => handleDeleteVolunteer(v.id)} disabled={v.status !== 'pending'} className="p-2 rounded-md text-slate-500 hover:bg-rose-100 hover:text-rose-700 disabled:opacity-50 disabled:cursor-not-allowed" title="Delete Registration"><TrashIcon className="h-5 w-5" /></button>
                       </div>
                     </td>
                   </tr>
@@ -214,6 +204,33 @@ export default function VolunteerListPage() {
               </tbody>
             </table>
 
+            {/* ✅ NEW MOBILE CARD VIEW: Visible on small screens, hidden on medium and up */}
+            <div className="block md:hidden divide-y divide-slate-100">
+              {paginatedVolunteers.map((v) => (
+                <div key={v.id} className="p-4">
+                    <div className="flex justify-between items-start gap-4">
+                        <div>
+                            <p className="text-sm font-semibold text-slate-800">{v.first_name} {v.last_name}</p>
+                            <p className="text-xs text-slate-500 flex items-center gap-1.5 mt-2"><EnvelopeIcon className="h-3.5 w-3.5" />{v.email}</p>
+                            <p className="text-xs text-slate-500 flex items-center gap-1.5 mt-1.5"><CalendarIcon className="h-3.5 w-3.5" />{new Date(v.registration_date).toLocaleDateString()}</p>
+                        </div>
+                        <div className="flex-shrink-0"><StatusBadge status={v.status} /></div>
+                    </div>
+                    <div className="mt-4 flex items-center justify-end gap-x-2">
+                        <button onClick={() => handleOpenModal(v)} className="p-2 rounded-md text-slate-500 hover:bg-slate-100 hover:text-sky-700" title="Quick View/Edit Status"><PencilSquareIcon className="h-5 w-5" /></button>
+                        {v.status === 'approved' && (<button onClick={() => goToDetailPage(v.id)} className="p-2 rounded-md text-slate-500 hover:bg-slate-100 hover:text-green-700" title="Go to Volunteer Workspace"><ArrowTopRightOnSquareIcon className="h-5 w-5" /></button>)}
+                        <button onClick={() => handleDeleteVolunteer(v.id)} disabled={v.status !== 'pending'} className="p-2 rounded-md text-slate-500 hover:bg-rose-100 hover:text-rose-700 disabled:opacity-50 disabled:cursor-not-allowed" title="Delete Registration"><TrashIcon className="h-5 w-5" /></button>
+                    </div>
+                </div>
+              ))}
+            </div>
+
+            {/* ✅ MOVED Loading/Error/Empty states to work for both views */}
+            {isLoading && (<p className="p-6 text-center text-slate-500">Loading volunteers...</p>)}
+            {!isLoading && error && (<p className="p-6 text-center text-red-500">Error: {error}</p>)}
+            {!isLoading && !error && paginatedVolunteers.length === 0 && (<p className="p-6 text-center text-slate-500">No volunteers found.</p>)}
+
+            {/* Pagination */}
             {totalPages > 1 && (
                 <div className="flex items-center justify-between border-t border-slate-200 bg-white px-4 py-3">
                     <div><p className="text-sm text-slate-700">Page <span className="font-medium">{currentPage}</span> of <span className="font-medium">{totalPages}</span></p></div>
