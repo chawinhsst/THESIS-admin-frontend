@@ -17,11 +17,13 @@ import {
     HeartIcon,
     ArrowsRightLeftIcon,
     ArrowsUpDownIcon,
+    CloudArrowDownIcon,
 } from '@heroicons/react/24/outline';
 import VolunteerDetailModal from '../components/VolunteerDetailModal';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000';
 
+// --- UTILITY FUNCTIONS ---
 const formatDuration = (totalSeconds) => {
   if (totalSeconds == null) return 'N/A';
   const hours = Math.floor(totalSeconds / 3600);
@@ -34,6 +36,7 @@ const formatDuration = (totalSeconds) => {
   ].filter(Boolean).join(':');
 };
 
+// --- (Other utility functions like SkeletonCard, InfoItem, etc. are unchanged) ---
 const SkeletonCard = ({ lines = 3 }) => (
   <div className="bg-white p-6 rounded-xl shadow-lg animate-pulse">
     <div className="h-5 bg-slate-200 rounded w-3/4 mb-4"></div>
@@ -157,8 +160,7 @@ const StatItem = ({ icon, value, isSorted = false }) => (
   </div>
 );
 
-// --- MODIFIED SessionListItem ---
-const SessionListItem = ({ session, onDelete, sortBy, isSelected, onSelect, onReuploadSuccess }) => {
+const SessionListItem = ({ session, onDelete, onExport, isExporting, sortBy, isSelected, onSelect, onReuploadSuccess }) => {
   const navigate = useNavigate();
   const { authToken } = useAuth();
   const fileInputRef = useRef(null);
@@ -179,10 +181,8 @@ const SessionListItem = ({ session, onDelete, sortBy, isSelected, onSelect, onRe
   const handleFileReupload = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
-
     const formData = new FormData();
     formData.append('session_file', file);
-
     try {
       const response = await fetch(`${API_BASE_URL}/api/sessions/${session.id}/`, {
         method: 'PATCH',
@@ -190,7 +190,6 @@ const SessionListItem = ({ session, onDelete, sortBy, isSelected, onSelect, onRe
         body: formData,
       });
       if (!response.ok) throw new Error('Re-upload failed.');
-      
       alert('File submitted for reprocessing!');
       onReuploadSuccess();
     } catch (error) {
@@ -222,8 +221,16 @@ const SessionListItem = ({ session, onDelete, sortBy, isSelected, onSelect, onRe
             </div>
           </div>
         </div>
-        {/* --- MODIFIED --- This block is updated to add the new button */}
         <div className="flex items-center space-x-2">
+            <button
+                onClick={(e) => { e.stopPropagation(); onExport(session); }}
+                disabled={isExporting}
+                className="flex items-center gap-2 text-sm font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-md px-3 py-1.5 shadow-sm disabled:bg-slate-400"
+                title="Export this session to CSV"
+            >
+                <CloudArrowDownIcon className="w-4 h-4"/>
+                <span>{isExporting ? '...' : 'Export'}</span>
+            </button>
             <button 
                 onClick={() => navigate(`/sessions/${session.id}`)} 
                 className="flex items-center gap-2 text-sm font-semibold text-white bg-sky-600 hover:bg-sky-700 rounded-md px-3 py-1.5 shadow-sm" 
@@ -244,7 +251,7 @@ const SessionListItem = ({ session, onDelete, sortBy, isSelected, onSelect, onRe
       
       {hasData && (
         <div className="bg-slate-50 rounded-md p-3 mt-3 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-x-4 gap-y-2">
-            <StatItem icon={<ArrowsRightLeftIcon />} value={`${session.total_distance_km || 0} km`} isSorted={sortBy === 'total_distance_km'} />
+            <StatItem icon={<ArrowsRightLeftIcon />} value={`${(session.total_distance_km || 0).toFixed(2)} km`} isSorted={sortBy === 'total_distance_km'} />
             <StatItem icon={<ClockIcon />} value={formatDuration(session.total_duration_secs)} isSorted={sortBy === 'total_duration_secs'}/>
             <StatItem icon={<HeartIcon />} value={`Avg: ${session.avg_heart_rate || 'N/A'}`} isSorted={sortBy === 'avg_heart_rate'}/>
             <StatItem icon={<HeartIcon className="text-blue-500"/>} value={`Min: ${session.min_heart_rate || 'N/A'}`} isSorted={sortBy === 'min_heart_rate'}/>
@@ -282,25 +289,6 @@ const sortOptions = [
     { value: 'avg_heart_rate', label: 'Avg Heart Rate' },
 ];
 
-const SessionListItemSkeleton = () => (
-    <div className="border rounded-xl p-4 bg-white animate-pulse">
-        <div className="flex justify-between items-start gap-2 mb-3">
-            <div className="flex items-start gap-3 w-full">
-                <div className="h-5 w-5 rounded bg-slate-200 mt-0.5"></div>
-                <div className="w-full space-y-2">
-                    <div className="h-5 w-2/3 bg-slate-200 rounded"></div>
-                    <div className="h-3 w-1/3 bg-slate-200 rounded"></div>
-                </div>
-            </div>
-        </div>
-        <div className="bg-slate-50 rounded-md p-3 mt-3 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-x-4 gap-y-2">
-            {Array.from({ length: 5 }).map((_, i) => (
-                <div key={i} className="h-5 w-20 bg-slate-200 rounded"></div>
-            ))}
-        </div>
-    </div>
-);
-
 const SessionListSkeletonContainer = ({ count }) => (
     <div className="space-y-4">
         <div className="flex items-center pb-2 animate-pulse">
@@ -308,7 +296,22 @@ const SessionListSkeletonContainer = ({ count }) => (
             <div className="ml-3 h-4 w-24 bg-slate-200 rounded"></div>
         </div>
         {Array.from({ length: count }).map((_, i) => (
-            <SessionListItemSkeleton key={i} />
+             <div key={i} className="border rounded-xl p-4 bg-white animate-pulse">
+                <div className="flex justify-between items-start gap-2 mb-3">
+                    <div className="flex items-start gap-3 w-full">
+                        <div className="h-5 w-5 rounded bg-slate-200 mt-0.5"></div>
+                        <div className="w-full space-y-2">
+                            <div className="h-5 w-2/3 bg-slate-200 rounded"></div>
+                            <div className="h-3 w-1/3 bg-slate-200 rounded"></div>
+                        </div>
+                    </div>
+                </div>
+                <div className="bg-slate-50 rounded-md p-3 mt-3 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-x-4 gap-y-2">
+                    {Array.from({ length: 5 }).map((_, i) => (
+                        <div key={i} className="h-5 w-20 bg-slate-200 rounded"></div>
+                    ))}
+                </div>
+            </div>
         ))}
     </div>
 );
@@ -317,13 +320,10 @@ const PaginationControls = ({ paginationInfo, onPageChange, currentPage, pageSiz
     if (pageSize === 'all' || !paginationInfo || (typeof pageSize === 'number' && paginationInfo.count <= pageSize)) {
         return null;
     }
-
     const handlePrev = () => onPageChange(currentPage - 1);
     const handleNext = () => onPageChange(currentPage + 1);
-
     const fromItem = paginationInfo.count > 0 ? (currentPage - 1) * pageSize + 1 : 0;
     const toItem = Math.min(currentPage * pageSize, paginationInfo.count);
-
     return (
         <div className="flex items-center justify-between mt-6 border-t pt-4">
             <p className="text-sm text-slate-700">
@@ -331,25 +331,16 @@ const PaginationControls = ({ paginationInfo, onPageChange, currentPage, pageSiz
                 <span className="font-semibold">{paginationInfo.count}</span> results
             </p>
             <div className="flex gap-2">
-                <button
-                    onClick={handlePrev}
-                    disabled={!paginationInfo.previous}
-                    className="rounded-md bg-white px-3 py-1.5 text-sm font-medium text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
+                <button onClick={handlePrev} disabled={!paginationInfo.previous} className="rounded-md bg-white px-3 py-1.5 text-sm font-medium text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed">
                     Previous
                 </button>
-                <button
-                    onClick={handleNext}
-                    disabled={!paginationInfo.next}
-                    className="rounded-md bg-white px-3 py-1.5 text-sm font-medium text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
+                <button onClick={handleNext} disabled={!paginationInfo.next} className="rounded-md bg-white px-3 py-1.5 text-sm font-medium text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed">
                     Next
                 </button>
             </div>
         </div>
     );
 };
-
 
 export default function VolunteerDetailPage() {
   const { volunteerId } = useParams();
@@ -359,7 +350,6 @@ export default function VolunteerDetailPage() {
   const [sessions, setSessions] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSessionsLoading, setIsSessionsLoading] = useState(true);
-  const [hasFetchedOnce, setHasFetchedOnce] = useState(false);
   const [error, setError] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   
@@ -376,112 +366,86 @@ export default function VolunteerDetailPage() {
   const [refetchTrigger, setRefetchTrigger] = useState(0);
   const pageSizeOptions = [10, 25, 50, 'all'];
 
+  const [isExporting, setIsExporting] = useState(false);
+  const [exportingId, setExportingId] = useState(null);
+
+  useEffect(() => {
+      if (!authToken) return;
+      setIsLoading(true);
+      const controller = new AbortController();
+      fetch(`${API_BASE_URL}/api/volunteers/${volunteerId}/`, {
+          headers: { 'Authorization': `Token ${authToken}` },
+          signal: controller.signal,
+      })
+      .then(res => {
+          if (!res.ok) throw new Error('Failed to load volunteer data.');
+          return res.json();
+      })
+      .then(data => setVolunteer(data))
+      .catch(err => {
+          if (err.name !== 'AbortError') setError(err.message);
+      })
+      .finally(() => setIsLoading(false));
+
+      return () => controller.abort();
+  }, [volunteerId, authToken]);
+  
   useEffect(() => {
     if (!authToken) return;
+    setIsSessionsLoading(true);
     const controller = new AbortController();
 
-    const fetchAllSessionsInParallel = async (initialUrl) => {
-        // 1. Fetch the first page to get total count and page size
-        const firstPageRes = await fetch(initialUrl, {
-            headers: { 'Authorization': `Token ${authToken}` },
-            signal: controller.signal,
-        });
-        if (!firstPageRes.ok) throw new Error('Failed to load initial session data for parallel fetch.');
-        const firstPageData = await firstPageRes.json();
-
-        const { count, results } = firstPageData;
+    const fetchAllSessionsInParallel = async (url) => {
+        const firstRes = await fetch(url, { headers: { 'Authorization': `Token ${authToken}` }, signal: controller.signal });
+        if (!firstRes.ok) throw new Error('Failed to load initial session data.');
+        const firstData = await firstRes.json();
+        const { count, results } = firstData;
         if (!results || results.length === 0) return [];
-        
         const inferredPageSize = results.length;
         const totalPages = Math.ceil(count / inferredPageSize);
-        
         if (totalPages <= 1) return results;
-
-        // 2. Create an array of promises for the remaining pages
-        const pagePromises = [];
+        
+        const promises = [];
         for (let page = 2; page <= totalPages; page++) {
-            const pageUrl = new URL(initialUrl);
+            const pageUrl = new URL(url);
             pageUrl.searchParams.set('page', page);
-            pagePromises.push(
-                fetch(pageUrl.toString(), { 
-                    headers: { 'Authorization': `Token ${authToken}` }, 
-                    signal: controller.signal 
-                }).then(res => res.json())
-            );
+            promises.push(fetch(pageUrl.toString(), { headers: { 'Authorization': `Token ${authToken}` }, signal: controller.signal }).then(res => res.json()));
         }
-
-        // 3. Await all promises in parallel
-        const remainingPagesData = await Promise.all(pagePromises);
-
-        // 4. Combine results
-        const allSessions = results;
-        remainingPagesData.forEach(pageData => {
-            if (pageData.results) {
-                allSessions.push(...pageData.results);
-            }
-        });
-
-        return allSessions;
+        const remainingData = await Promise.all(promises);
+        const all = results;
+        remainingData.forEach(page => { if (page.results) all.push(...page.results); });
+        return all;
     };
 
-    const fetchData = async () => {
-      setIsSessionsLoading(true);
-      if (!volunteer) setIsLoading(true);
-      setError(null);
-      
-      try {
-        const volunteerPromise = volunteer ? Promise.resolve(volunteer) : fetch(`${API_BASE_URL}/api/volunteers/${volunteerId}/`, {
-            headers: { 'Authorization': `Token ${authToken}` },
-            signal: controller.signal,
-        }).then(res => {
-            if (!res.ok) throw new Error('Failed to load volunteer data.');
-            return res.json();
-        });
-        
-        const ordering = sortDirection === 'desc' ? `-${sortBy}` : sortBy;
-        const initialSessionUrl = `${API_BASE_URL}/api/sessions/?volunteer=${volunteerId}&ordering=${ordering}`;
+    const ordering = sortDirection === 'desc' ? `-${sortBy}` : sortBy;
+    const initialUrl = `${API_BASE_URL}/api/sessions/?volunteer=${volunteerId}&ordering=${ordering}`;
 
-        let sessionsPromise;
-        if (pageSize !== 'all') {
-            const paginatedUrl = `${initialSessionUrl}&page=${currentPage}&page_size=${pageSize}`;
-            sessionsPromise = fetch(paginatedUrl, { headers: { 'Authorization': `Token ${authToken}` }, signal: controller.signal }).then(res => {
-                if (!res.ok) throw new Error('Failed to load session data.');
-                return res.json();
-            });
-        } else {
-            sessionsPromise = fetchAllSessionsInParallel(initialSessionUrl);
-        }
+    let fetchPromise;
+    if (pageSize === 'all') {
+        fetchPromise = fetchAllSessionsInParallel(initialUrl);
+    } else {
+        const paginatedUrl = `${initialUrl}&page=${currentPage}&page_size=${pageSize}`;
+        fetchPromise = fetch(paginatedUrl, { headers: { 'Authorization': `Token ${authToken}` }, signal: controller.signal }).then(res => res.json());
+    }
 
-        const [volunteerData, sessionsResponse] = await Promise.all([volunteerPromise, sessionsPromise]);
-        
-        setVolunteer(volunteerData);
-
-        if (pageSize !== 'all') {
-            setSessions(sessionsResponse.results || []);
-            setPaginationInfo({
-              count: sessionsResponse.count,
-              next: sessionsResponse.next,
-              previous: sessionsResponse.previous,
-            });
-        } else {
-            setSessions(sessionsResponse);
+    fetchPromise.then(data => {
+        if (pageSize === 'all') {
+            setSessions(data);
             setPaginationInfo(null);
+        } else {
+            setSessions(data.results || []);
+            setPaginationInfo({ count: data.count, next: data.next, previous: data.previous });
         }
-
-        setSelectedSessions(new Set());
-      } catch (err) {
+    }).catch(err => {
         if (err.name !== 'AbortError') setError(err.message);
-      } finally {
-        setIsLoading(false);
+    }).finally(() => {
         setIsSessionsLoading(false);
-        setHasFetchedOnce(true);
-      }
-    };
-    
-    fetchData();
-    
+        setSelectedSessions(new Set());
+    });
+
     return () => controller.abort();
   }, [volunteerId, authToken, currentPage, pageSize, sortBy, sortDirection, refetchTrigger]);
+
 
   useEffect(() => {
     function handleClickOutside(event) {
@@ -581,6 +545,139 @@ export default function VolunteerDetailPage() {
   };
 
   const handleUpdateVolunteer = (updatedVolunteer) => { setVolunteer(updatedVolunteer); };
+
+  const convertToCSV = (data, headers) => {
+    const headerRow = headers.join(',');
+    const bodyRows = data.map(row => 
+      headers.map(header => {
+        const value = row[header] ?? '';
+        const stringValue = String(value);
+        if (stringValue.includes(',')) {
+          return `"${stringValue.replace(/"/g, '""')}"`;
+        }
+        return stringValue;
+      }).join(',')
+    );
+    return [headerRow, ...bodyRows].join('\n');
+  };
+
+  const downloadCSV = (csvString, filename) => {
+    const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    if (link.download !== undefined) {
+        const url = URL.createObjectURL(blob);
+        link.setAttribute('href', url);
+        link.setAttribute('download', filename);
+        link.style.visibility = 'hidden';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    }
+  };
+
+  const processAndDownload = (sessions, filename) => {
+      let csvData = [];
+      const headerSet = new Set(['session_id', 'run_date', 'timestamp', 'anomaly', 'heart_rate', 'speed', 'distance']);
+      
+      sessions.forEach(session => {
+        if (session.timeseries_data && session.timeseries_data.length > 0) {
+          session.timeseries_data.forEach(row => {
+            const flatRow = {
+              session_id: session.id,
+              run_date: new Date(session.session_date).toISOString().split('T')[0],
+              ...row
+            };
+            Object.keys(flatRow).forEach(key => headerSet.add(key));
+            csvData.push(flatRow);
+          });
+        }
+      });
+
+      if (csvData.length === 0) {
+        alert("No time-series data found in selected session(s) to export.");
+        return;
+      }
+      
+      const orderedHeaders = Array.from(headerSet);
+      const csvString = convertToCSV(csvData, orderedHeaders);
+      downloadCSV(csvString, filename);
+  }
+
+  // ✅ UPDATED: Multi-export now downloads individual files
+  const handleExportSelected = async () => {
+    const sessionIds = Array.from(selectedSessions);
+    if (sessionIds.length === 0 || !volunteer) return;
+    setIsExporting(true);
+    try {
+        const promises = sessionIds.map(id =>
+            fetch(`${API_BASE_URL}/api/sessions/${id}/`, { headers: { 'Authorization': `Token ${authToken}` } })
+            .then(res => {
+                if (!res.ok) throw new Error(`HTTP error for session ${id}: ${res.status}`);
+                return res.json();
+            })
+        );
+        const results = await Promise.allSettled(promises);
+
+        const successfulFetches = results
+            .filter(result => result.status === 'fulfilled')
+            .map(result => result.value);
+        
+        const failedFetches = results.filter(result => result.status === 'rejected');
+        if (failedFetches.length > 0) {
+            console.error("Some sessions failed to fetch:", failedFetches.map(f => f.reason));
+            alert(`${failedFetches.length} out of ${sessionIds.length} sessions could not be fetched.`);
+        }
+        
+        if (successfulFetches.length === 0) {
+            alert("No session data could be exported.");
+            return;
+        }
+
+        // Iterate and download each one individually
+        successfulFetches.forEach(session => {
+            const runDate = (session.timeseries_data && session.timeseries_data.length > 0)
+                ? new Date(session.timeseries_data[0].timestamp)
+                : new Date(session.session_date);
+            
+            const dateString = runDate.toISOString().split('T')[0];
+            const safeFirstName = volunteer.first_name.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+            const safeLastName = volunteer.last_name.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+            const filename = `${safeFirstName}_${safeLastName}_${dateString}_session_${session.id}.csv`;
+
+            processAndDownload([session], filename);
+        });
+    } catch (err) {
+      alert(`An error occurred during export: ${err.message}`);
+    } finally {
+      setIsExporting(false);
+    }
+  };
+  
+  // ✅ UPDATED: Uses the correct run date for single export filename
+  const handleExportSingleSession = async (session) => {
+    if (!session || !volunteer) return;
+    setExportingId(session.id);
+    try {
+        const res = await fetch(`${API_BASE_URL}/api/sessions/${session.id}/`, { headers: { 'Authorization': `Token ${authToken}` } });
+        if (!res.ok) throw new Error(`Failed to fetch session ${session.id}`);
+        const detailedSession = await res.json();
+        
+        const runDate = (detailedSession.timeseries_data && detailedSession.timeseries_data.length > 0)
+            ? new Date(detailedSession.timeseries_data[0].timestamp)
+            : new Date(detailedSession.session_date);
+
+        const dateString = runDate.toISOString().split('T')[0];
+        const safeFirstName = volunteer.first_name.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+        const safeLastName = volunteer.last_name.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+        const filename = `${safeFirstName}_${safeLastName}_${dateString}_session_${session.id}.csv`;
+
+        processAndDownload([detailedSession], filename);
+    } catch (err) {
+        alert(`An error occurred during export: ${err.message}`);
+    } finally {
+        setExportingId(null);
+    }
+  };
   
   if (isLoading) {
     return (
@@ -614,47 +711,34 @@ export default function VolunteerDetailPage() {
                   <h3 className="text-lg font-bold text-gray-900">Running Sessions</h3>
                   <div className="flex items-center gap-x-4 gap-y-2 flex-wrap">
                     {selectedSessions.size > 0 && (
-                      <button 
-                        onClick={handleDeleteSelected}
-                        className="flex items-center gap-1.5 text-sm font-semibold text-white bg-red-600 hover:bg-red-700 rounded-md px-3 py-2"
-                      >
-                        <TrashIcon className="w-4 h-4"/>
-                        Delete ({selectedSessions.size})
-                      </button>
+                      <>
+                        <button onClick={handleExportSelected} disabled={isExporting} className="flex items-center gap-1.5 text-sm font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-md px-3 py-2 disabled:bg-slate-400">
+                          <CloudArrowDownIcon className="w-4 h-4"/>
+                          {isExporting ? 'Exporting...' : `Export (${selectedSessions.size})`}
+                        </button>
+                        <button onClick={handleDeleteSelected} className="flex items-center gap-1.5 text-sm font-semibold text-white bg-red-600 hover:bg-red-700 rounded-md px-3 py-2">
+                          <TrashIcon className="w-4 h-4"/>
+                          Delete ({selectedSessions.size})
+                        </button>
+                      </>
                     )}
                     <div className="flex items-center gap-2">
                         <label htmlFor="pageSize" className="text-sm font-medium text-gray-700">Show:</label>
-                        <select
-                            id="pageSize"
-                            name="pageSize"
-                            value={pageSize}
-                            onChange={handlePageSizeChange}
-                            className="h-full rounded-md border-gray-300 py-2 pl-3 pr-7 text-gray-700 focus:outline-none focus:ring-2 focus:ring-sky-500 sm:text-sm"
-                        >
-                            {pageSizeOptions.map(option => (
-                                <option key={option} value={option}>
-                                    {option === 'all' ? 'All' : option}
-                                </option>
-                            ))}
+                        <select id="pageSize" name="pageSize" value={pageSize} onChange={handlePageSizeChange} className="h-full rounded-md border-gray-300 py-2 pl-3 pr-7 text-gray-700 focus:outline-none focus:ring-2 focus:ring-sky-500 sm:text-sm">
+                            {pageSizeOptions.map(option => ( <option key={option} value={option}>{option === 'all' ? 'All' : option}</option> ))}
                         </select>
                     </div>
                     <div className="relative" ref={sortDropdownRef}>
                       <button onClick={() => setIsSortOpen(!isSortOpen)} className="flex items-center gap-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md px-4 py-2 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-sky-500">
                         <ArrowsUpDownIcon className="w-4 h-4 text-gray-400"/>
                         <span>Sort: {currentSortLabel} </span>
-                        <span className={`font-semibold ${sortDirection === 'asc' ? 'text-blue-600' : 'text-red-600'}`}>
-                          ({sortDirection === 'asc' ? 'Asc' : 'Desc'})
-                        </span>
+                        <span className={`font-semibold ${sortDirection === 'asc' ? 'text-blue-600' : 'text-red-600'}`}>({sortDirection === 'asc' ? 'Asc' : 'Desc'})</span>
                       </button>
                       {isSortOpen && (
                         <div className="absolute right-0 mt-2 w-56 bg-white rounded-md shadow-lg z-20 border">
                           <div className="py-1">
                             {sortOptions.map(option => (
-                              <button
-                                key={option.value}
-                                onClick={() => handleSortChange(option.value)}
-                                className={`w-full text-left flex items-center px-4 py-2 text-sm hover:bg-gray-100 ${sortBy === option.value ? 'font-bold text-sky-600' : 'text-gray-700'}`}
-                              >
+                              <button key={option.value} onClick={() => handleSortChange(option.value)} className={`w-full text-left flex items-center px-4 py-2 text-sm hover:bg-gray-100 ${sortBy === option.value ? 'font-bold text-sky-600' : 'text-gray-700'}`}>
                                 {option.label}
                               </button>
                             ))}
@@ -664,7 +748,6 @@ export default function VolunteerDetailPage() {
                     </div>
                   </div>
                 </div>
-
                 {isSessionsLoading ? (
                     <SessionListSkeletonContainer count={typeof pageSize === 'number' ? pageSize : 10} />
                 ) : (
@@ -691,11 +774,13 @@ export default function VolunteerDetailPage() {
                                             isSelected={selectedSessions.has(session.id)}
                                             onSelect={handleSelectSession}
                                             onReuploadSuccess={triggerRefetch}
+                                            onExport={handleExportSingleSession}
+                                            isExporting={exportingId === session.id}
                                         />
                                     ))}
                                 </>
                             ) : (
-                                hasFetchedOnce && <p className="text-sm text-gray-500 text-center py-12">No sessions have been uploaded for this volunteer yet.</p>
+                                !isSessionsLoading && <p className="text-sm text-gray-500 text-center py-12">No sessions have been uploaded for this volunteer yet.</p>
                             )}
                         </div>
                         <PaginationControls 
