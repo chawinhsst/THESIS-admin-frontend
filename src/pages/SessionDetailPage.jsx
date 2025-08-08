@@ -27,6 +27,7 @@ import {
     ExclamationCircleIcon,
     ScissorsIcon,
     ExclamationTriangleIcon,
+    CloudArrowDownIcon,
 } from '@heroicons/react/24/outline';
 import { useAuth } from '../context/AuthContext';
 import { getAuthToken } from '../utils/auth';
@@ -584,6 +585,7 @@ export default function SessionDetailPage() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [changeSummary, setChangeSummary] = useState([]);
   const [isResetModalOpen, setIsResetModalOpen] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
 
   const normalizedTimeseriesData = useMemo(() => {
     if (!session.timeseries_data) return [];
@@ -731,7 +733,6 @@ export default function SessionDetailPage() {
     setIsResetModalOpen(false);
   };
 
-  // ✅ FIX: Separated brush drag from programmatic changes to prevent lag
   const handleBrushChange = (newDomain) => {
     if (newDomain && newDomain.startIndex != null) {
         setActiveDomain(newDomain);
@@ -744,7 +745,7 @@ export default function SessionDetailPage() {
         setCurrentSegmentIndex(null);
     }
     setActiveDomain(newDomain);
-    setBrushKey(k => k + 1); // Only force re-render on programmatic changes
+    setBrushKey(k => k + 1);
   };
 
   const handleTimelineZoom = (segment) => {
@@ -866,6 +867,63 @@ export default function SessionDetailPage() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [dropdownRef]);
   
+  const convertToCSV = (data, headers) => {
+      const headerRow = headers.join(',');
+      const bodyRows = data.map(row => 
+          headers.map(header => {
+              const value = row[header] ?? '';
+              const stringValue = String(value);
+              if (stringValue.includes(',')) {
+                  return `"${stringValue.replace(/"/g, '""')}"`;
+              }
+              return stringValue;
+          }).join(',')
+      );
+      return [headerRow, ...bodyRows].join('\n');
+  };
+
+  const downloadCSV = (csvString, filename) => {
+      const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
+      const link = document.createElement('a');
+      if (link.download !== undefined) {
+          const url = URL.createObjectURL(blob);
+          link.setAttribute('href', url);
+          link.setAttribute('download', filename);
+          link.style.visibility = 'hidden';
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+      }
+  };
+
+  const handleExport = async () => {
+      if (!hasTimeseries) {
+          alert("No data available to export.");
+          return;
+      }
+      setIsExporting(true);
+      try {
+          const runDate = new Date(chartData[0].timestamp);
+          const dateString = runDate.toISOString().split('T')[0];
+          
+          const safeFirstName = session.volunteer_first_name.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+          const safeLastName = session.volunteer_last_name.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+          const filename = `${safeFirstName}_${safeLastName}_${dateString}_session_${session.id}.csv`;
+
+          const allHeaders = new Set(['timestamp', 'anomaly']);
+          interactiveData.forEach(row => Object.keys(row).forEach(key => allHeaders.add(key)));
+          
+          const orderedHeaders = Array.from(allHeaders);
+          const csvString = convertToCSV(interactiveData, orderedHeaders);
+          downloadCSV(csvString, filename);
+      } catch (err) {
+          alert("An error occurred during export.");
+          console.error(err);
+      } finally {
+          setIsExporting(false);
+      }
+  };
+  
   if (isLoading) {
     return (
         <div className="p-4 sm:p-8 bg-slate-100 min-h-full font-sans flex items-center justify-center">
@@ -969,6 +1027,11 @@ export default function SessionDetailPage() {
                                         Reset All
                                     </button>
                                 )}
+                                {/* ✅ MOVED and UPDATED Export Button */}
+                                <button onClick={handleExport} disabled={isExporting} className="flex items-center gap-1.5 rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:bg-slate-400">
+                                    <CloudArrowDownIcon className="w-4 h-4" />
+                                    {isExporting ? 'Exporting...' : 'Export CSV'}
+                                </button>
                             </div>
                             <div className="flex items-center gap-4">
                                 <div className="flex items-center gap-2">
