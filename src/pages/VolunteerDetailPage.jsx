@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom';
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
@@ -231,14 +232,16 @@ const SessionListItem = ({ session, onDelete, onExport, isExporting, sortBy, isS
                 <CloudArrowDownIcon className="w-4 h-4"/>
                 <span>{isExporting ? '...' : 'Export'}</span>
             </button>
-            <button 
-                onClick={() => navigate(`/sessions/${session.id}`)} 
+            <Link 
+                to={`/sessions/${session.id}`}
+                target="_blank"
+                rel="noopener noreferrer"
                 className="flex items-center gap-2 text-sm font-semibold text-white bg-sky-600 hover:bg-sky-700 rounded-md px-3 py-1.5 shadow-sm" 
                 title="View & Label Session"
             >
                 <PencilSquareIcon className="w-4 h-4" />
                 <span>View & Label</span>
-            </button>
+            </Link>
             <button 
                 onClick={(e) => { e.stopPropagation(); onDelete(session.id); }} 
                 className="p-1.5 rounded-md hover:bg-red-100 text-gray-400 hover:text-red-600" 
