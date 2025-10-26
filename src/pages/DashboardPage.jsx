@@ -106,26 +106,51 @@ export default function DashboardPage() {
   const { authToken } = useAuth();
 
   useEffect(() => {
+    // --- THIS FUNCTION IS NOW FIXED ---
     const fetchVolunteers = async () => {
       if (!authToken) return;
       setIsLoading(true);
+      
+      let allData = []; // To store volunteers from all pages
+      let nextUrl = `${API_BASE_URL}/api/volunteers/`; // Start with the first page
+
       try {
-        const response = await fetch(`${API_BASE_URL}/api/volunteers/`, {
-          headers: { 'Authorization': `Token ${authToken}` },
-        });
-        if (!response.ok) throw new Error('Failed to fetch volunteer data.');
-        const data = await response.json();
-        const volunteersArray = data.results || data;
-        const sortedData = volunteersArray.sort((a, b) => new Date(b.registration_date) - new Date(a.registration_date));
+        // Loop while there is a 'next' URL to fetch
+        while (nextUrl) {
+          const response = await fetch(nextUrl, {
+            headers: { 'Authorization': `Token ${authToken}` },
+          });
+          if (!response.ok) throw new Error('Failed to fetch volunteer data.');
+          const data = await response.json();
+
+          // Add the results from this page to our main array
+          allData.push(...(data.results || (Array.isArray(data) ? data : [])));
+          
+          // Get the URL for the next page, or null if this is the last page
+          nextUrl = data.next;
+        }
+
+        // Now, allData contains ALL volunteers
+        const sortedData = allData.sort((a, b) => new Date(b.registration_date) - new Date(a.registration_date));
+        
         setAllVolunteers(sortedData);
+        
+        // Calculate stats based on the complete list
         setStats({
-          total: volunteersArray.length,
-          pending: volunteersArray.filter(v => v.status === 'pending').length,
-          approved: volunteersArray.filter(v => v.status === 'approved').length,
-          rejected: volunteersArray.filter(v => v.status === 'rejected').length,
+          total: sortedData.length,
+          pending: sortedData.filter(v => v.status === 'pending').length,
+          approved: sortedData.filter(v => v.status === 'approved').length,
+          rejected: sortedData.filter(v => v.status === 'rejected').length,
         });
-      } catch (err) { console.error(err.message); } finally { setIsLoading(false); }
+
+      } catch (err) { 
+        console.error(err.message); 
+      } finally { 
+        setIsLoading(false); 
+      }
     };
+    // --- END OF FIX ---
+    
     fetchVolunteers();
   }, [authToken]);
 
@@ -138,7 +163,6 @@ export default function DashboardPage() {
             <>
                 <KpiCard title="Total Volunteers" value={stats.total} icon={UsersIcon} color="text-sky-500" status="all" />
                 <KpiCard title="Pending Approval" value={stats.pending} icon={ClockIcon} color="text-amber-500" status="pending" />
-                {/* --- THIS LINE WAS FIXED --- */}
                 <KpiCard title="Approved Volunteers" value={stats.approved} icon={CheckCircleIcon} color="text-emerald-500" status="approved" />
                 <KpiCard title="Rejected Applicants" value={stats.rejected} icon={XCircleIcon} color="text-rose-500" status="rejected" />
             </>

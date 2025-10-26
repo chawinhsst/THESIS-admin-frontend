@@ -66,26 +66,51 @@ export default function VolunteerListPage() {
   const [sliderStyle, setSliderStyle] = useState({});
   const tabsRef = useRef(new Map());
 
+  // --- THIS useEffect IS NOW FIXED ---
   useEffect(() => {
     const fetchVolunteers = async () => {
       if (!authToken) return;
       setIsLoading(true);
+      setError(null); // Reset error state on new fetch
+
+      let allData = []; // To store volunteers from all pages
+      let nextUrl = `${API_BASE_URL}/api/volunteers/`; // Start with the first page
+
       try {
-        const response = await fetch(`${API_BASE_URL}/api/volunteers/`, { headers: { 'Authorization': `Token ${authToken}` } });
-        if (!response.ok) throw new Error('Failed to fetch volunteer data.');
-        const data = await response.json();
-        setAllVolunteers(data.results || data);
-      } catch (err) { setError(err.message); } finally { setIsLoading(false); }
+        // Loop while there is a 'next' URL to fetch
+        while (nextUrl) {
+          const response = await fetch(nextUrl, {
+            headers: { 'Authorization': `Token ${authToken}` },
+          });
+          if (!response.ok) throw new Error('Failed to fetch volunteer data.');
+          const data = await response.json();
+
+          // Add the results from this page to our main array
+          allData.push(...(data.results || (Array.isArray(data) ? data : [])));
+          
+          // Get the URL for the next page, or null if this is the last page
+          nextUrl = data.next;
+        }
+
+        // Now, allData contains ALL volunteers
+        setAllVolunteers(allData);
+
+      } catch (err) { 
+        setError(err.message); 
+      } finally { 
+        setIsLoading(false); 
+      }
     };
     fetchVolunteers();
   }, [authToken]);
+  // --- END OF FIX ---
 
   useEffect(() => {
     const activeTabNode = tabsRef.current.get(activeStatus);
     if (activeTabNode) {
       setSliderStyle({ left: activeTabNode.offsetLeft, width: activeTabNode.offsetWidth });
     }
-  }, [activeStatus, allVolunteers]);
+  }, [activeStatus, allVolunteers]); // allVolunteers added as dependency
 
   const processedVolunteers = useMemo(() => {
     let filtered = [...allVolunteers];
@@ -99,8 +124,12 @@ export default function VolunteerListPage() {
     }
     if (sortConfig.key) {
       filtered.sort((a, b) => {
-        if (a[sortConfig.key] < b[sortConfig.key]) return sortConfig.direction === 'ascending' ? -1 : 1;
-        if (a[sortConfig.key] > b[sortConfig.key]) return sortConfig.direction === 'ascending' ? 1 : -1;
+        // Handle potential null or undefined values
+        const valA = a[sortConfig.key] || '';
+        const valB = b[sortConfig.key] || '';
+        
+        if (valA < valB) return sortConfig.direction === 'ascending' ? -1 : 1;
+        if (valA > valB) return sortConfig.direction === 'ascending' ? 1 : -1;
         return 0;
       });
     }
@@ -114,7 +143,13 @@ export default function VolunteerListPage() {
     let direction = 'ascending';
     if (sortConfig.key === key && sortConfig.direction === 'ascending') direction = 'descending';
     setSortConfig({ key, direction });
+    setCurrentPage(1); // Reset to first page on sort
   };
+  
+  // Reset page to 1 when filters change
+  useEffect(() => {
+      setCurrentPage(1);
+  }, [activeStatus, searchQuery]);
 
   const handleOpenModal = (volunteer) => setSelectedVolunteer(volunteer);
   const handleCloseModal = () => setSelectedVolunteer(null);
@@ -122,7 +157,13 @@ export default function VolunteerListPage() {
   const handleDeleteVolunteer = async (id) => {
     if (window.confirm("Are you sure? This cannot be undone.")) {
       try {
-        await fetch(`${API_BASE_URL}/api/volunteers/${id}/`, { method: 'DELETE', headers: { 'Authorization': `Token ${authToken}` } });
+        const response = await fetch(`${API_BASE_URL}/api/volunteers/${id}/`, { 
+          method: 'DELETE', 
+          headers: { 'Authorization': `Token ${authToken}` } 
+        });
+        if (!response.ok) {
+            throw new Error('Failed to delete volunteer.');
+        }
         setAllVolunteers(allVolunteers.filter(v => v.id !== id));
       } catch (err) { alert(`Error: ${err.message}`); }
     }
@@ -160,7 +201,7 @@ export default function VolunteerListPage() {
                 <button
                   key={tab.value}
                   ref={(node) => { if (node) tabsRef.current.set(tab.value, node); }}
-                  onClick={() => { setActiveStatus(tab.value); setCurrentPage(1); }}
+                  onClick={() => { setActiveStatus(tab.value); }} // Removed setCurrentPage(1) as it's handled by useEffect
                   className={`relative z-10 flex items-center justify-center whitespace-nowrap rounded-md py-2 text-sm font-semibold transition-colors duration-300 px-3 sm:px-4 ${
                     activeStatus === tab.value ? 'text-sky-600' : 'text-slate-600 hover:text-sky-600'
                   }`}
@@ -174,7 +215,7 @@ export default function VolunteerListPage() {
           </div>
 
           <div className="bg-white rounded-2xl shadow-lg border border-slate-200/80 overflow-hidden">
-            {/* ✅ DESKTOP TABLE: Hidden on small screens, visible on medium and up */}
+            {/* DESKTOP TABLE */}
             <table className="w-full hidden md:table">
               <thead className="bg-slate-100">
                 <tr>
@@ -186,7 +227,16 @@ export default function VolunteerListPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200">
-                {paginatedVolunteers.map((v) => (
+                {isLoading && (
+                    <tr><td colSpan="5" className="p-6 text-center text-slate-500">Loading volunteers...</td></tr>
+                )}
+                {!isLoading && error && (
+                    <tr><td colSpan="5" className="p-6 text-center text-red-500">Error: {error}</td></tr>
+                )}
+                {!isLoading && !error && paginatedVolunteers.length === 0 && (
+                    <tr><td colSpan="5" className="p-6 text-center text-slate-500">No volunteers found.</td></tr>
+                )}
+                {!isLoading && !error && paginatedVolunteers.map((v) => (
                   <tr key={v.id} className="hover:bg-slate-50">
                     <td className="whitespace-nowrap px-6 py-4 text-sm font-semibold text-slate-800">{v.first_name} {v.last_name}</td>
                     <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-600">{v.email}</td>
@@ -204,9 +254,13 @@ export default function VolunteerListPage() {
               </tbody>
             </table>
 
-            {/* ✅ NEW MOBILE CARD VIEW: Visible on small screens, hidden on medium and up */}
+            {/* MOBILE CARD VIEW */}
             <div className="block md:hidden divide-y divide-slate-100">
-              {paginatedVolunteers.map((v) => (
+              {isLoading && (<p className="p-6 text-center text-slate-500">Loading volunteers...</p>)}
+              {!isLoading && error && (<p className="p-6 text-center text-red-500">Error: {error}</p>)}
+              {!isLoading && !error && paginatedVolunteers.length === 0 && (<p className="p-6 text-center text-slate-500">No volunteers found.</p>)}
+              
+              {!isLoading && !error && paginatedVolunteers.map((v) => (
                 <div key={v.id} className="p-4">
                     <div className="flex justify-between items-start gap-4">
                         <div>
@@ -225,18 +279,39 @@ export default function VolunteerListPage() {
               ))}
             </div>
 
-            {/* ✅ MOVED Loading/Error/Empty states to work for both views */}
-            {isLoading && (<p className="p-6 text-center text-slate-500">Loading volunteers...</p>)}
-            {!isLoading && error && (<p className="p-6 text-center text-red-500">Error: {error}</p>)}
-            {!isLoading && !error && paginatedVolunteers.length === 0 && (<p className="p-6 text-center text-slate-500">No volunteers found.</p>)}
-
             {/* Pagination */}
             {totalPages > 1 && (
-                <div className="flex items-center justify-between border-t border-slate-200 bg-white px-4 py-3">
-                    <div><p className="text-sm text-slate-700">Page <span className="font-medium">{currentPage}</span> of <span className="font-medium">{totalPages}</span></p></div>
-                    <div className="inline-flex -space-x-px rounded-md shadow-sm">
-                        <button onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1} className="relative inline-flex items-center rounded-l-md px-3 py-1.5 text-slate-500 ring-1 ring-inset ring-slate-300 hover:bg-slate-50 disabled:opacity-50">&lt;</button>
-                        <button onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages} className="relative inline-flex items-center rounded-r-md px-3 py-1.5 text-slate-500 ring-1 ring-inset ring-slate-300 hover:bg-slate-50 disabled:opacity-50">&gt;</button>
+                <div className="flex items-center justify-between border-t border-slate-200 bg-white px-4 py-3 sm:px-6">
+                    <div className="flex-1 flex justify-between sm:hidden">
+                         <button onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1} className="relative inline-flex items-center rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">
+                            Previous
+                        </button>
+                        <button onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages} className="relative ml-3 inline-flex items-center rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">
+                            Next
+                        </button>
+                    </div>
+                    <div className="hidden sm:flex-1 sm:flex sm:items-center sm:justify-between">
+                        <div>
+                            <p className="text-sm text-slate-700">
+                                Showing <span className="font-medium">{(currentPage - 1) * ITEMS_PER_PAGE + 1}</span>
+                                {' '}to <span className="font-medium">{Math.min(currentPage * ITEMS_PER_PAGE, processedVolunteers.length)}</span>
+                                {' '}of <span className="font-medium">{processedVolunteers.length}</span> results
+                            </p>
+                        </div>
+                        <div>
+                            <nav className="inline-flex -space-x-px rounded-md shadow-sm">
+                                <button onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1} className="relative inline-flex items-center rounded-l-md px-3 py-1.5 text-slate-500 ring-1 ring-inset ring-slate-300 hover:bg-slate-50 disabled:opacity-50">
+                                    &lt; <span className="sr-only">Previous</span>
+                                </button>
+                                {/* Simple text for current page info */}
+                                <span className="relative inline-flex items-center px-4 py-1.5 text-sm font-medium text-slate-700 ring-1 ring-inset ring-slate-300">
+                                    Page {currentPage} of {totalPages}
+                                </span>
+                                <button onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages} className="relative inline-flex items-center rounded-r-md px-3 py-1.5 text-slate-500 ring-1 ring-inset ring-slate-300 hover:bg-slate-50 disabled:opacity-50">
+                                    &gt; <span className="sr-only">Next</span>
+                                </button>
+                            </nav>
+                        </div>
                     </div>
                 </div>
             )}
