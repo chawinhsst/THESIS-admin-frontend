@@ -240,6 +240,20 @@ const ResetConfirmationModal = ({ isOpen, onClose, onConfirm }) => {
 };
 
 // --- CHART COMPONENTS ---
+
+// List of all fields that can be used as an anomaly source
+const anomalySources = [
+  { key: 'anomaly', label: 'Manual Label' },
+  { key: 'ensemble_prediction', label: 'Ensemble Prediction' },
+  { key: 'lof_prediction', label: 'LOF Prediction' },
+  { key: 'iforest_prediction', label: 'Isolation Forest' },
+  { key: 'ocsvm_prediction', label: 'OCSVM Prediction' },
+  { key: 'kmeans_prediction', label: 'K-Means Prediction' },
+  { key: 'lstm_prediction', label: 'LSTM Prediction' },
+  { key: 'usad_prediction', label: 'USAD Prediction' },
+  { key: 'mp_prediction', label: 'MP Prediction' },
+];
+
 const chartableParams = [
   { key: 'speed', label: 'Pace', unit: 'min/km', color: '#3b82f6' },
   { key: 'cadence', label: 'Cadence', unit: 'rpm', color: '#f97316' },
@@ -252,31 +266,44 @@ const chartableParams = [
   { key: 'enhanced_speed', label: 'Enhanced Pace', unit: 'min/km', color: '#6366f1' },
   { key: 'enhanced_altitude', label: 'Enhanced Altitude', unit: 'm', color: '#10b981' },
 ];
+
 const AnomalyDot = (props) => {
-    const { cx, cy, payload, dynamicRadius } = props;
+    const { cx, cy, payload, dynamicRadius, selectedAnomalyKey } = props; // MODIFIED
     if (dynamicRadius === 0 || payload.heart_rate == null) return null;
-    if (payload.anomaly === 1) { return <Dot cx={cx} cy={cy} r={dynamicRadius + 1} fill="#ef4444" stroke="#b91c1c" strokeWidth={1} />; }
+
+    // MODIFIED: Use the dynamic selectedAnomalyKey
+    if (payload[selectedAnomalyKey] === 1) { 
+        return <Dot cx={cx} cy={cy} r={dynamicRadius + 1} fill="#ef4444" stroke="#b91c1c" strokeWidth={1} />; 
+    }
+    
+    // Replicates original logic: show green dot if value is not 1
     return <Dot cx={cx} cy={cy} r={dynamicRadius} fill="#22c55e" />;
 };
-const AnomalyTimeline = ({ data, onSegmentClick }) => {
+
+const AnomalyTimeline = ({ data, onSegmentClick, selectedAnomalyKey }) => { // MODIFIED
     const totalPoints = data.length;
     if (totalPoints === 0) return null;
+    
     const anomalySegments = useMemo(() => {
         const segments = [];
         if (data.length === 0) return segments;
         let inSegment = false;
         for (let i = 0; i < data.length; i++) {
-            if (data[i].anomaly === 1 && !inSegment) {
+            // MODIFIED: Use the dynamic selectedAnomalyKey
+            if (data[i][selectedAnomalyKey] === 1 && !inSegment) {
                 inSegment = true;
                 segments.push({ start: i, end: i });
-            } else if (data[i].anomaly === 1 && inSegment) {
+            // MODIFIED: Use the dynamic selectedAnomalyKey
+            } else if (data[i][selectedAnomalyKey] === 1 && inSegment) {
                 segments[segments.length - 1].end = i;
-            } else if (data[i].anomaly !== 1 && inSegment) {
+            // MODIFIED: Use the dynamic selectedAnomalyKey
+            } else if (data[i][selectedAnomalyKey] !== 1 && inSegment) {
                 inSegment = false;
             }
         }
         return segments;
-    }, [data]);
+    }, [data, selectedAnomalyKey]); // MODIFIED: Add dependency
+
     return (
         <div className="relative w-full h-4 bg-slate-200 rounded-full overflow-hidden border border-slate-300">
             {anomalySegments.map((segment, index) => {
@@ -289,31 +316,40 @@ const AnomalyTimeline = ({ data, onSegmentClick }) => {
         </div>
     );
 };
+
 const HeartRateChart = ({ session, timeseriesData: chartData, onAnomalyToggle, onTimelineZoom, activeDomain, onBrushChange, brushKey, chartHeight, hasUnsavedChanges, isSaving, onSaveChanges, hrDomain, hasHeartRateData }) => {
-  const [visibleParams, setVisibleParams] = useState(new Set());  
+  const [visibleParams, setVisibleParams] = useState(new Set());
+  
+  // NEW: Add state for the selected anomaly source
+  const [selectedAnomalyKey, setSelectedAnomalyKey] = useState('anomaly');
+  
   const chartMargin = { top: 20, right: 40, left: 20, bottom: 60 };
   const [isMounted, setIsMounted] = useState(false);
+  
   useEffect(() => {
     const timer = setTimeout(() => setIsMounted(true), 10);
     return () => clearTimeout(timer);
   }, []);
+  
   const xAxisDomain = useMemo(() => {
     if (!activeDomain || !chartData.length || activeDomain.startIndex == null) return ['dataMin', 'dataMax'];
     const startSeconds = chartData[activeDomain.startIndex]?.elapsed_time;
     const endSeconds = chartData[activeDomain.endIndex]?.elapsed_time;
     if (startSeconds != null && endSeconds != null && endSeconds > startSeconds) {
         const duration = endSeconds - startSeconds;
-        const padding = duration * 0.05; 
+        const padding = duration * 0.05;  
         const paddedStart = Math.max(0, startSeconds - padding);
         const paddedEnd = endSeconds + padding;
         return [paddedStart, paddedEnd];
     }
     return ['dataMin', 'dataMax'];
   }, [activeDomain, chartData]);
+  
   const visiblePointsCount = useMemo(() => {
     if (!activeDomain || !chartData.length) return chartData.length;
     return activeDomain.endIndex - activeDomain.startIndex + 1;
   }, [activeDomain, chartData.length]);
+  
   const getDynamicDotRadius = (pointCount) => {
     if (pointCount > 1000) return 0;
     if (pointCount > 500) return 3;
@@ -321,19 +357,31 @@ const HeartRateChart = ({ session, timeseriesData: chartData, onAnomalyToggle, o
     if (pointCount > 50) return 5;
     return 6;
   };
+  
   const dynamicRadius = getDynamicDotRadius(visiblePointsCount);
+  
+  // MODIFIED: Update renderDynamicDot to pass the selectedAnomalyKey
   const renderDynamicDot = (props) => {
     const { key, ...rest } = props;
-    return <AnomalyDot key={key} {...rest} dynamicRadius={dynamicRadius} />;
+    return <AnomalyDot key={key} {...rest} selectedAnomalyKey={selectedAnomalyKey} dynamicRadius={dynamicRadius} />;
   };
+
+  // MODIFIED: Update click handler to only work on 'Manual Label'
   const handleChartClick = (e) => {
     if (!e || e.activeTooltipIndex == null) return;
+
+    // Only allow toggling if the selected source is the manual 'anomaly' field
+    if (selectedAnomalyKey !== 'anomaly') {
+        return;
+    }
+    
     const clickedIndex = e.activeTooltipIndex;
     const dataPoint = chartData[clickedIndex];
     if (dataPoint && dataPoint.heart_rate != null) {
       onAnomalyToggle(dataPoint.originalIndex);
     }
   };
+  
   const toggleParam = (paramKey) => {
     setVisibleParams(prev => {
       const newSet = new Set(prev);
@@ -341,9 +389,16 @@ const HeartRateChart = ({ session, timeseriesData: chartData, onAnomalyToggle, o
       return newSet;
     });
   };
+
+  // MODIFIED: The Tooltip now needs to be dynamic
   const CustomTooltip = ({ active, payload, label }) => {
     if (active && payload && payload.length) {
         const dataPoint = payload[0].payload;
+        
+        // MODIFIED: Get status from the dynamically selected key
+        const anomalyStatus = dataPoint[selectedAnomalyKey];
+        const anomalySource = anomalySources.find(s => s.key === selectedAnomalyKey)?.label || 'Status';
+
         return (
           <div className="p-4 bg-white/80 backdrop-blur-md border border-slate-300 rounded-lg shadow-xl text-sm">
             <p className="font-bold mb-2 text-slate-900">{`Time: ${formatDuration(label)}`}</p>
@@ -352,12 +407,15 @@ const HeartRateChart = ({ session, timeseriesData: chartData, onAnomalyToggle, o
                 <span>Heart Rate:</span>
                 <span>{`${dataPoint.heart_rate != null ? dataPoint.heart_rate.toFixed(0) : 'N/A'} bpm`}</span>
               </li>
-              {dataPoint.anomaly != null && (
-                <li className={`flex items-center justify-between font-bold ${dataPoint.anomaly === 1 ? 'text-red-600' : 'text-green-600'}`}>
-                  <span>Status:</span>
-                  <span>{dataPoint.anomaly === 1 ? 'Anomaly' : 'Normal'}</span>
+
+              {/* MODIFIED: Show status based on selectedAnomalyKey */}
+              {anomalyStatus != null && (
+                <li className={`flex items-center justify-between font-bold ${anomalyStatus === 1 ? 'text-red-600' : 'text-green-600'}`}>
+                  <span>{anomalySource}:</span>
+                  <span>{anomalyStatus === 1 ? 'Anomaly' : 'Normal'}</span>
                 </li>
               )}
+              
               <hr className="my-1 border-slate-200" />
               {chartableParams.map(param => {
                   if (visibleParams.has(param.key)) {
@@ -387,6 +445,8 @@ const HeartRateChart = ({ session, timeseriesData: chartData, onAnomalyToggle, o
       }
       return null;
   };
+
+  // MODIFIED: This is the return block you asked for, now updated
   return (
     <div className="p-4 sm:p-6">
         <div className="flex flex-wrap justify-between items-center border-b border-slate-200 pb-4 mb-6 gap-4">
@@ -404,6 +464,7 @@ const HeartRateChart = ({ session, timeseriesData: chartData, onAnomalyToggle, o
                 </button>
             )}
         </div>
+
         <div className="mb-6">
             <p className="text-sm font-medium text-slate-600 mb-3">Add parameters to chart:</p>
             <div className="flex flex-wrap items-center gap-2">
@@ -414,19 +475,50 @@ const HeartRateChart = ({ session, timeseriesData: chartData, onAnomalyToggle, o
             ))}
             </div>
         </div>
+        
+        {/* MODIFIED: Add dropdown for anomaly source */}
         <div className="mb-4">
-            <p className="text-xs font-semibold text-slate-500 mb-2 uppercase tracking-wider">Anomaly Overview</p>
-            <AnomalyTimeline data={chartData} onSegmentClick={onTimelineZoom} />
+            <div className="flex justify-between items-center mb-2">
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Anomaly Overview</p>
+                
+                {/* NEW: Anomaly Source Selector */}
+                <div className="flex items-center gap-2">
+                    <label htmlFor="anomaly-source" className="text-sm font-medium text-slate-700">Display:</label>
+                    <select
+                        id="anomaly-source"
+                        value={selectedAnomalyKey}
+                        onChange={(e) => setSelectedAnomalyKey(e.target.value)}
+                        className="block w-full max-w-xs rounded-md border-gray-300 shadow-sm text-sm focus:ring-sky-500 focus:border-sky-500"
+                    >
+                        {anomalySources.map(source => (
+                            <option key={source.key} value={source.key}>{source.label}</option>
+                        ))}
+                    </select>
+                </div>
+            </div>
+            
+            {/* MODIFIED: Pass selectedAnomalyKey to the timeline */}
+            <AnomalyTimeline data={chartData} onSegmentClick={onTimelineZoom} selectedAnomalyKey={selectedAnomalyKey} />
         </div>
+
         <div style={{ width: '100%', height: chartHeight }} className="relative">
             {!hasHeartRateData && (<div className="absolute inset-0 flex items-center justify-center bg-slate-50/70 z-10 rounded-md"><p className="text-slate-500 font-medium text-lg">Heart Rate data not available.</p></div>)}
             <ResponsiveContainer key={brushKey}>
-                <LineChart data={chartData} margin={chartMargin} onClick={handleChartClick}>
+                {/* MODIFIED: Add style for cursor based on selection */}
+                <LineChart 
+                    data={chartData} 
+                    margin={chartMargin} 
+                    onClick={handleChartClick}
+                    style={{ cursor: selectedAnomalyKey === 'anomaly' ? 'pointer' : 'default' }}
+                >
                     <CartesianGrid strokeDasharray="3 3" stroke={isMounted ? "#e2e8f0" : "transparent"} />
                     <XAxis dataKey="elapsed_time" tickFormatter={formatDuration} label={{ value: "Elapsed Time", position: "insideBottom", offset: -50, dy: 10, fill: '#475569' }} type="number" domain={xAxisDomain} allowDataOverflow tick={{ fill: '#64748b' }} axisLine={{ stroke: '#cbd5e1' }} tickLine={{ stroke: '#cbd5e1' }}/>
                     <YAxis yAxisId="left" stroke="#dc2626" label={{ value: 'Heart Rate (bpm)', angle: -90, position: 'insideLeft', offset: -10, style: {textAnchor: 'middle', fill: '#dc2626'}}} domain={hrDomain} allowDataOverflow tick={{ fill: '#dc2626' }} axisLine={{ stroke: '#fca5a5' }} tickLine={{ stroke: '#fca5a5' }}/>
                     {visibleParams.size > 0 && <YAxis yAxisId="right" orientation="right" stroke="#6366f1" tick={{ fill: '#6366f1' }} axisLine={{ stroke: '#a5b4fc' }} tickLine={{ stroke: '#a5b4fc' }} />}
+                    
+                    {/* MODIFIED: Tooltip content is now dynamic via CustomTooltip */}
                     <Tooltip content={<CustomTooltip />} cursor={{ stroke: '#6366f1', strokeWidth: 1, strokeDasharray: '3 3' }}/>
+                    
                     <Legend verticalAlign="top" wrapperStyle={{paddingBottom: '20px', paddingTop: '5px'}}/>
                     {hasHeartRateData && (
                         <>
@@ -435,7 +527,10 @@ const HeartRateChart = ({ session, timeseriesData: chartData, onAnomalyToggle, o
                         </>
                     )}
                     {chartableParams.map(param => visibleParams.has(param.key) && (<Line key={param.key} yAxisId="right" type="monotone" dataKey={param.key} name={param.label} stroke={param.color} dot={false} strokeWidth={1.5} connectNulls />))}
+                    
+                    {/* MODIFIED: The dot prop now calls renderDynamicDot, which is also modified */}
                     <Line yAxisId="left" type="monotone" dataKey="heart_rate" name="Heart Rate" stroke="#dc2626" strokeWidth={2.5} dot={renderDynamicDot} activeDot={{ r: 8, strokeWidth: 2, stroke: '#b91c1c' }} connectNulls zIndex={100} />
+                    
                     <Brush dataKey="elapsed_time" height={35} stroke="#6366f1" onChange={onBrushChange} tickFormatter={formatDuration} startIndex={activeDomain?.startIndex} endIndex={activeDomain?.endIndex} alwaysShowText={true} y={chartHeight - 45}>
                         <LineChart><Line type="monotone" dataKey="heart_rate" stroke="#dc2626" dot={false} connectNulls /></LineChart>
                     </Brush>
@@ -445,6 +540,7 @@ const HeartRateChart = ({ session, timeseriesData: chartData, onAnomalyToggle, o
     </div>
   );
 };
+
 const TimeInput = ({ totalSeconds, onChange, maxSeconds }) => {
     const [time, setTime] = useState({ h: 0, m: 0, s: 0 });
     useEffect(() => {
