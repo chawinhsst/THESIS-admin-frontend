@@ -270,35 +270,58 @@ const chartableParams = [
 ];
 
 const AnomalyDot = (props) => {
-    const { cx, cy, payload, dynamicRadius, selectedAnomalyKey, showManualAnomalies } = props;
-    if (dynamicRadius === 0 || payload.heart_rate == null) return null;
+    const { cx, cy, payload, dynamicRadius, selectedAnomalyKey, showManualAnomalies, showMlAnomalies } = props;
+    
+    // 1. Always check for valid data first
+    if (payload.heart_rate == null) return null;
 
+    // 2. Determine anomaly status
     const mlAnomaly = payload[selectedAnomalyKey] === 1;
     const manualAnomaly = payload.anomaly === 1;
 
+    // 3. Determine if this dot represents an anomaly we *currently* display
+    const isMlVisible = mlAnomaly && showMlAnomalies;
+    const isManualVisible = manualAnomaly && showManualAnomalies;
+    const isAnomalousAndVisible = isMlVisible || isManualVisible;
+
+    let radius;
+
+    // 4. Determine radius
+    if (dynamicRadius === 0) {
+        // We are zoomed out. Only render if it's a visible anomaly.
+        if (!isAnomalousAndVisible) {
+            return null; // Do not render normal dots when zoomed out
+        }
+        // It is a visible anomaly, so force a small radius
+        radius = 3; 
+    } else {
+        // We are zoomed in, use the calculated dynamicRadius
+        radius = dynamicRadius;
+    }
+
+    // 5. Determine fill and stroke
     let fill, stroke, strokeWidth;
 
-    // 1. Determine Fill Color (based on Manual Label)
     if (showManualAnomalies) {
         fill = manualAnomaly ? "#ef4444" : "#22c55e"; // Red for anomaly, Green for normal
     } else {
         fill = "#9ca3af"; // Default gray if manual labels are hidden
     }
 
-    // 2. Determine Stroke (based on ML Prediction)
-    if (mlAnomaly) {
+    if (isMlVisible) {
         stroke = ML_ANOMALY_COLOR;
-        strokeWidth = 3; // Thicker stroke for ML anomaly
+        // Use a slightly smaller stroke when zoomed out so it doesn't look too cluttered
+        strokeWidth = radius === 3 ? 2 : 3; 
     } else {
-        // Default stroke
-        stroke = showManualAnomalies && manualAnomaly ? "#b91c1c" : fill; // Darker red border, else same as fill
+        stroke = showManualAnomalies && manualAnomaly ? "#b91c1c" : fill;
         strokeWidth = 1;
     }
 
-    return <Dot cx={cx} cy={cy} r={dynamicRadius} fill={fill} stroke={stroke} strokeWidth={strokeWidth} />;
+    // 6. Render the dot
+    return <Dot cx={cx} cy={cy} r={radius} fill={fill} stroke={stroke} strokeWidth={strokeWidth} />;
 };
 
-const AnomalyTimeline = ({ data, onSegmentClick, selectedAnomalyKey, showManualAnomalies }) => {
+const AnomalyTimeline = ({ data, onSegmentClick, selectedAnomalyKey, showManualAnomalies, showMlAnomalies }) => {
     const totalPoints = data.length;
     if (totalPoints === 0) return null;
 
@@ -321,6 +344,8 @@ const AnomalyTimeline = ({ data, onSegmentClick, selectedAnomalyKey, showManualA
 
     // 2. Calculate ML Anomaly Segments
     const mlSegments = useMemo(() => {
+        // MODIFIED: Hide if toggled off
+        if (!showMlAnomalies) return [];
         const segments = [];
         let inSegment = false;
         for (let i = 0; i < data.length; i++) {
@@ -333,7 +358,8 @@ const AnomalyTimeline = ({ data, onSegmentClick, selectedAnomalyKey, showManualA
             }
         }
         return segments;
-    }, [data, selectedAnomalyKey]);
+        // MODIFIED: Add showMlAnomalies to dependency array
+    }, [data, selectedAnomalyKey, showMlAnomalies]);
 
     return (
         // Taller to accommodate two tracks
@@ -364,257 +390,308 @@ const AnomalyTimeline = ({ data, onSegmentClick, selectedAnomalyKey, showManualA
 };
 
 const HeartRateChart = ({ session, timeseriesData: chartData, onAnomalyToggle, onTimelineZoom, activeDomain, onBrushChange, brushKey, chartHeight, hasUnsavedChanges, isSaving, onSaveChanges, hrDomain, hasHeartRateData }) => {
-  const [visibleParams, setVisibleParams] = useState(new Set());  
-  
-  // Default to the first ML prediction in the list
-  const [selectedAnomalyKey, setSelectedAnomalyKey] = useState(anomalySources[0]?.key || 'ensemble_prediction');
-  
-  // NEW: State for showing manual labels, defaults to true
-  const [showManualAnomalies, setShowManualAnomalies] = useState(true);
+    const [visibleParams, setVisibleParams] = useState(new Set());
 
-  const chartMargin = { top: 20, right: 40, left: 20, bottom: 60 };
-  const [isMounted, setIsMounted] = useState(false);
-  
-  useEffect(() => {
-    const timer = setTimeout(() => setIsMounted(true), 10);
-    return () => clearTimeout(timer);
-  }, []);
-  
-  const xAxisDomain = useMemo(() => {
-    if (!activeDomain || !chartData.length || activeDomain.startIndex == null) return ['dataMin', 'dataMax'];
-    const startSeconds = chartData[activeDomain.startIndex]?.elapsed_time;
-    const endSeconds = chartData[activeDomain.endIndex]?.elapsed_time;
-    if (startSeconds != null && endSeconds != null && endSeconds > startSeconds) {
-        const duration = endSeconds - startSeconds;
-        const padding = duration * 0.05;  
-        const paddedStart = Math.max(0, startSeconds - padding);
-        const paddedEnd = endSeconds + padding;
-        return [paddedStart, paddedEnd];
-    }
-    return ['dataMin', 'dataMax'];
-  }, [activeDomain, chartData]);
-  
-  const visiblePointsCount = useMemo(() => {
-    if (!activeDomain || !chartData.length) return chartData.length;
-    return activeDomain.endIndex - activeDomain.startIndex + 1;
-  }, [activeDomain, chartData.length]);
-  
-  const getDynamicDotRadius = (pointCount) => {
-    if (pointCount > 1000) return 0;
-    if (pointCount > 500) return 3;
-    if (pointCount > 200) return 4;
-    if (pointCount > 50) return 5;
-    return 6;
-  };
-  
-  const dynamicRadius = getDynamicDotRadius(visiblePointsCount);
-  
-  // MODIFIED: Pass new state to the dot renderer
-  const renderDynamicDot = (props) => {
-    const { key, ...rest } = props;
-    return <AnomalyDot 
-        key={key} 
-        {...rest} 
-        selectedAnomalyKey={selectedAnomalyKey} 
-        showManualAnomalies={showManualAnomalies} 
-        dynamicRadius={dynamicRadius} 
-    />;
-  };
-  
-  // This handler is *only* for toggling the manual 'anomaly' field, which is correct.
-  const handleChartClick = (e) => {
-    if (!e || e.activeTooltipIndex == null) return;
-    
-    const clickedIndex = e.activeTooltipIndex;
-    const dataPoint = chartData[clickedIndex];
-    if (dataPoint && dataPoint.heart_rate != null) {
-      onAnomalyToggle(dataPoint.originalIndex);
-    }
-  };
-  
-  const toggleParam = (paramKey) => {
-    setVisibleParams(prev => {
-      const newSet = new Set(prev);
-      newSet.has(paramKey) ? newSet.delete(paramKey) : newSet.add(paramKey);
-      return newSet;
-    });
-  };
-  
-  // MODIFIED: Tooltip now shows both Manual and ML status
-  const CustomTooltip = ({ active, payload, label }) => {
-    if (active && payload && payload.length) {
-        const dataPoint = payload[0].payload;
-        
-        // 1. Get ML Anomaly Status
-        const mlAnomalyStatus = dataPoint[selectedAnomalyKey];
-        const mlAnomalySource = anomalySources.find(s => s.key === selectedAnomalyKey)?.label || 'ML Status';
+    // Default to the first ML prediction in the list
+    const [selectedAnomalyKey, setSelectedAnomalyKey] = useState(anomalySources[0]?.key || 'ensemble_prediction');
 
-        // 2. Get Manual Anomaly Status
-        const manualAnomalyStatus = dataPoint.anomaly;
+    // State for showing manual labels, defaults to true
+    const [showManualAnomalies, setShowManualAnomalies] = useState(true);
+    // State for showing ML predictions, defaults to true
+    const [showMlAnomalies, setShowMlAnomalies] = useState(true);
 
-        return (
-          <div className="p-4 bg-white/80 backdrop-blur-md border border-slate-300 rounded-lg shadow-xl text-sm">
-            <p className="font-bold mb-2 text-slate-900">{`Time: ${formatDuration(label)}`}</p>
-            <ul className="list-none p-0 m-0 space-y-1.5">
-              <li className="flex items-center justify-between font-semibold" style={{ color: '#dc2626' }}>
-                <span>Heart Rate:</span>
-                <span>{`${dataPoint.heart_rate != null ? dataPoint.heart_rate.toFixed(0) : 'N/A'} bpm`}</span>
-              </li>
+    const chartMargin = { top: 20, right: 40, left: 20, bottom: 60 };
+    const [isMounted, setIsMounted] = useState(false);
 
-              {/* Show Manual Status */}
-              <li className={`flex items-center justify-between font-bold ${manualAnomalyStatus === 1 ? 'text-red-600' : 'text-green-600'}`}>
-                  <span>Manual Label:</span>
-                  <span>{manualAnomalyStatus === 1 ? 'Anomaly' : 'Normal'}</span>
-              </li>
+    useEffect(() => {
+        const timer = setTimeout(() => setIsMounted(true), 10);
+        return () => clearTimeout(timer);
+    }, []);
 
-              {/* Show ML Status */}
-              {mlAnomalyStatus != null && (
-                <li className={`flex items-center justify-between font-bold`} style={{ color: mlAnomalyStatus === 1 ? ML_ANOMALY_COLOR : '#16a34a' }}>
-                  <span>{mlAnomalySource}:</span>
-                  <span>{mlAnomalyStatus === 1 ? 'Anomaly' : 'Normal'}</span>
-                </li>
-              )}
-              
-              <hr className="my-1 border-slate-200" />
-              {chartableParams.map(param => {
-                  if (visibleParams.has(param.key)) {
-                    const value = dataPoint[param.key];
-                    let displayValue;
-                    if (value == null) {
-                        displayValue = 'N/A';
-                    } else if (param.key.includes('speed')) {
-                        displayValue = `${formatPace(value)} ${param.unit}`;
-                    } else if (param.key.includes('altitude')) {
-                        displayValue = `${value.toFixed(2)} ${param.unit}`;
-                    } else {
-                        displayValue = `${value.toFixed(1)} ${param.unit}`;
-                    }
-                    return (
-                        <li key={param.key} className="flex items-center justify-between" style={{ color: param.color }}>
-                            <span>{param.label}:</span>
-                            <span className="font-medium">{displayValue}</span>
+    const xAxisDomain = useMemo(() => {
+        if (!activeDomain || !chartData.length || activeDomain.startIndex == null) return ['dataMin', 'dataMax'];
+        const startSeconds = chartData[activeDomain.startIndex]?.elapsed_time;
+        const endSeconds = chartData[activeDomain.endIndex]?.elapsed_time;
+        if (startSeconds != null && endSeconds != null && endSeconds > startSeconds) {
+            const duration = endSeconds - startSeconds;
+            const padding = duration * 0.05;
+            const paddedStart = Math.max(0, startSeconds - padding);
+            const paddedEnd = endSeconds + padding;
+            return [paddedStart, paddedEnd];
+        }
+        return ['dataMin', 'dataMax'];
+    }, [activeDomain, chartData]);
+
+    const visiblePointsCount = useMemo(() => {
+        if (!activeDomain || !chartData.length) return chartData.length;
+        return activeDomain.endIndex - activeDomain.startIndex + 1;
+    }, [activeDomain, chartData.length]);
+
+    const getDynamicDotRadius = (pointCount) => {
+        if (pointCount > 1000) return 0;
+        if (pointCount > 500) return 3;
+        if (pointCount > 200) return 4;
+        if (pointCount > 50) return 5;
+        return 6;
+    };
+
+    const dynamicRadius = getDynamicDotRadius(visiblePointsCount);
+
+    // MODIFIED: This function now contains all logic from AnomalyDot
+    const renderDynamicDot = (props) => {
+        const { cx, cy, payload, key } = props;
+
+        // 1. Always check for valid data first
+        if (payload.heart_rate == null) return null;
+
+        // 2. Determine anomaly status
+        const mlAnomaly = payload[selectedAnomalyKey] === 1;
+        const manualAnomaly = payload.anomaly === 1;
+
+        // 3. Determine if this dot represents an anomaly we *currently* display
+        const isMlVisible = mlAnomaly && showMlAnomalies;
+        const isManualVisible = manualAnomaly && showManualAnomalies;
+        const isAnomalousAndVisible = isMlVisible || isManualVisible;
+
+        let radius;
+
+        // 4. Determine radius (THE CORE FIX)
+        if (dynamicRadius === 0) {
+            // We are zoomed out. Only render if it's a visible anomaly.
+            if (!isAnomalousAndVisible) {
+                return null; // Do not render normal dots when zoomed out
+            }
+            // It is a visible anomaly, so force a small radius
+            radius = 3;
+        } else {
+            // We are zoomed in, use the calculated dynamicRadius
+            radius = dynamicRadius;
+        }
+
+        // 5. Determine fill and stroke
+        let fill, stroke, strokeWidth;
+
+        if (showManualAnomalies) {
+            fill = manualAnomaly ? "#ef4444" : "#22c55e"; // Red for anomaly, Green for normal
+        } else {
+            fill = "#9ca3af"; // Default gray if manual labels are hidden
+        }
+
+        if (isMlVisible) {
+            stroke = ML_ANOMALY_COLOR;
+            // Use a slightly smaller stroke when zoomed out
+            strokeWidth = radius === 3 ? 2 : 3;
+        } else {
+            stroke = showManualAnomalies && manualAnomaly ? "#b91c1c" : fill;
+            strokeWidth = 1;
+        }
+
+        // 6. Render the dot
+        return <Dot key={key} cx={cx} cy={cy} r={radius} fill={fill} stroke={stroke} strokeWidth={strokeWidth} />;
+    };
+
+    // This handler is *only* for toggling the manual 'anomaly' field, which is correct.
+    const handleChartClick = (e) => {
+        if (!e || e.activeTooltipIndex == null) return;
+
+        const clickedIndex = e.activeTooltipIndex;
+        const dataPoint = chartData[clickedIndex];
+        if (dataPoint && dataPoint.heart_rate != null) {
+            onAnomalyToggle(dataPoint.originalIndex);
+        }
+    };
+
+    const toggleParam = (paramKey) => {
+        setVisibleParams(prev => {
+            const newSet = new Set(prev);
+            newSet.has(paramKey) ? newSet.delete(paramKey) : newSet.add(paramKey);
+            return newSet;
+        });
+    };
+
+    const CustomTooltip = ({ active, payload, label }) => {
+        if (active && payload && payload.length) {
+            const dataPoint = payload[0].payload;
+
+            // 1. Get ML Anomaly Status
+            const mlAnomalyStatus = dataPoint[selectedAnomalyKey];
+            const mlAnomalySource = anomalySources.find(s => s.key === selectedAnomalyKey)?.label || 'ML Status';
+
+            // 2. Get Manual Anomaly Status
+            const manualAnomalyStatus = dataPoint.anomaly;
+
+            return (
+                <div className="p-4 bg-white/80 backdrop-blur-md border border-slate-300 rounded-lg shadow-xl text-sm">
+                    <p className="font-bold mb-2 text-slate-900">{`Time: ${formatDuration(label)}`}</p>
+                    <ul className="list-none p-0 m-0 space-y-1.5">
+                        <li className="flex items-center justify-between font-semibold" style={{ color: '#dc2626' }}>
+                            <span>Heart Rate:</span>
+                            <span>{`${dataPoint.heart_rate != null ? dataPoint.heart_rate.toFixed(0) : 'N/A'} bpm`}</span>
                         </li>
-                    );
-                  }
-                  return null;
-              })}
-            </ul>
-          </div>
-        );
-      }
-      return null;
-  };
 
-  return (
-    <div className="p-4 sm:p-6">
-        <div className="flex flex-wrap justify-between items-center border-b border-slate-200 pb-4 mb-6 gap-4">
-            <div className='flex items-center gap-3'>
-                <ChartBarIcon className="w-7 h-7 text-indigo-500"/>
-                <div>
-                    <h3 className="text-lg font-bold text-slate-800">Interactive Performance Chart</h3>
-                    {hasUnsavedChanges && <p className="text-xs text-amber-600 font-semibold flex items-center gap-1"><ExclamationCircleIcon className="w-3.5 h-3.5" />Unsaved Changes</p>}
+                        {/* Show Manual Status */}
+                        <li className={`flex items-center justify-between font-bold ${manualAnomalyStatus === 1 ? 'text-red-600' : 'text-green-600'}`}>
+                            <span>Manual Label:</span>
+                            <span>{manualAnomalyStatus === 1 ? 'Anomaly' : 'Normal'}</span>
+                        </li>
+
+                        {/* Show ML Status */}
+                        {mlAnomalyStatus != null && (
+                            <li className={`flex items-center justify-between font-bold`} style={{ color: mlAnomalyStatus === 1 ? ML_ANOMALY_COLOR : '#16a34a' }}>
+                                <span>{mlAnomalySource}:</span>
+                                <span>{mlAnomalyStatus === 1 ? 'Anomaly' : 'Normal'}</span>
+                            </li>
+                        )}
+
+                        <hr className="my-1 border-slate-200" />
+                        {chartableParams.map(param => {
+                            if (visibleParams.has(param.key)) {
+                                const value = dataPoint[param.key];
+                                let displayValue;
+                                if (value == null) {
+                                    displayValue = 'N/A';
+                                } else if (param.key.includes('speed')) {
+                                    displayValue = `${formatPace(value)} ${param.unit}`;
+                                } else if (param.key.includes('altitude')) {
+                                    displayValue = `${value.toFixed(2)} ${param.unit}`;
+                                } else {
+                                    displayValue = `${value.toFixed(1)} ${param.unit}`;
+                                }
+                                return (
+                                    <li key={param.key} className="flex items-center justify-between" style={{ color: param.color }}>
+                                        <span>{param.label}:</span>
+                                        <span className="font-medium">{displayValue}</span>
+                                    </li>
+                                );
+                            }
+                            return null;
+                        })}
+                    </ul>
                 </div>
-            </div>
-            {hasUnsavedChanges && (
-                <button onClick={onSaveChanges} disabled={isSaving} className="flex items-center gap-2 rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 disabled:bg-slate-400 disabled:cursor-not-allowed transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2">
-                    <CheckCircleIcon className="w-5 h-5" />
-                    {isSaving ? 'Saving...' : 'Save Changes'}
-                </button>
-            )}
-        </div>
+            );
+        }
+        return null;
+    };
 
-        <div className="mb-6">
-            <p className="text-sm font-medium text-slate-600 mb-3">Add parameters to chart:</p>
-            <div className="flex flex-wrap items-center gap-2">
-            {chartableParams.map(param => (
-                <button key={param.key} onClick={() => toggleParam(param.key)} className={`px-3 py-1.5 text-xs font-semibold rounded-full transition-all duration-200 border ${visibleParams.has(param.key) ? 'text-white border-transparent' : 'text-slate-700 bg-white border-slate-300 hover:bg-slate-50 hover:border-slate-400'}`} style={visibleParams.has(param.key) ? { backgroundColor: param.color } : {}}>
-                {param.label}
-                </button>
-            ))}
-            </div>
-        </div>
-        
-        {/* MODIFIED: This section is updated with the new controls */}
-        <div className="mb-4">
-            <div className="flex flex-wrap justify-between items-center mb-2 gap-4">
-                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Anomaly Overview</p>
-                
-                <div className="flex items-center gap-4">
-                    {/* NEW: Checkbox to toggle manual labels */}
-                    <label className="flex items-center text-sm font-medium text-slate-700">
-                        <input
-                            type="checkbox"
-                            className="h-4 w-4 rounded border-gray-300 text-red-600 focus:ring-red-500"
-                            checked={showManualAnomalies}
-                            onChange={(e) => setShowManualAnomalies(e.target.checked)}
-                        />
-                        <span className="ml-2">Show Manual Labels</span>
-                    </label>
-
-                    {/* MODIFIED: This is now just for ML Predictions */}
-                    <div className="flex items-center gap-2">
-                        <label htmlFor="anomaly-source" className="text-sm font-medium text-slate-700">ML Prediction:</label>
-                        <select
-                            id="anomaly-source"
-                            value={selectedAnomalyKey}
-                            onChange={(e) => setSelectedAnomalyKey(e.target.value)}
-                            className="block w-full max-w-xs rounded-md border-gray-300 shadow-sm text-sm focus:ring-sky-500 focus:border-sky-500"
-                        >
-                            {anomalySources.map(source => (
-                                <option key={source.key} value={source.key}>{source.label}</option>
-                            ))}
-                        </select>
+    return (
+        <div className="p-4 sm:p-6">
+            <div className="flex flex-wrap justify-between items-center border-b border-slate-200 pb-4 mb-6 gap-4">
+                <div className='flex items-center gap-3'>
+                    <ChartBarIcon className="w-7 h-7 text-indigo-500" />
+                    <div>
+                        <h3 className="text-lg font-bold text-slate-800">Interactive Performance Chart</h3>
+                        {hasUnsavedChanges && <p className="text-xs text-amber-600 font-semibold flex items-center gap-1"><ExclamationCircleIcon className="w-3.5 h-3.5" />Unsaved Changes</p>}
                     </div>
                 </div>
+                {hasUnsavedChanges && (
+                    <button onClick={onSaveChanges} disabled={isSaving} className="flex items-center gap-2 rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 disabled:bg-slate-400 disabled:cursor-not-allowed transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2">
+                        <CheckCircleIcon className="w-5 h-5" />
+                        {isSaving ? 'Saving...' : 'Save Changes'}
+                    </button>
+                )}
             </div>
-            
-            {/* MODIFIED: Pass new props to the timeline */}
-            <AnomalyTimeline 
-                data={chartData} 
-                onSegmentClick={onTimelineZoom} 
-                selectedAnomalyKey={selectedAnomalyKey} 
-                showManualAnomalies={showManualAnomalies} 
-            />
-        </div>
 
-        <div style={{ width: '100%', height: chartHeight }} className="relative">
-            {!hasHeartRateData && (<div className="absolute inset-0 flex items-center justify-center bg-slate-50/70 z-10 rounded-md"><p className="text-slate-500 font-medium text-lg">Heart Rate data not available.</p></div>)}
-            <ResponsiveContainer key={brushKey}>
-                {/* MODIFIED: Cursor is always pointer, as clicking always edits manual labels */}
-                <LineChart 
-                    data={chartData} 
-                    margin={chartMargin} 
-                    onClick={handleChartClick}
-                    style={{ cursor: 'pointer' }}
-                >
-                    <CartesianGrid strokeDasharray="3 3" stroke={isMounted ? "#e2e8f0" : "transparent"} />
-                    <XAxis dataKey="elapsed_time" tickFormatter={formatDuration} label={{ value: "Elapsed Time", position: "insideBottom", offset: -50, dy: 10, fill: '#475569' }} type="number" domain={xAxisDomain} allowDataOverflow tick={{ fill: '#64748b' }} axisLine={{ stroke: '#cbd5e1' }} tickLine={{ stroke: '#cbd5e1' }}/>
-                    <YAxis yAxisId="left" stroke="#dc2626" label={{ value: 'Heart Rate (bpm)', angle: -90, position: 'insideLeft', offset: -10, style: {textAnchor: 'middle', fill: '#dc2626'}}} domain={hrDomain} allowDataOverflow tick={{ fill: '#dc2626' }} axisLine={{ stroke: '#fca5a5' }} tickLine={{ stroke: '#fca5a5' }}/>
-                    {visibleParams.size > 0 && <YAxis yAxisId="right" orientation="right" stroke="#6366f1" tick={{ fill: '#6366f1' }} axisLine={{ stroke: '#a5b4fc' }} tickLine={{ stroke: '#a5b4fc' }} />}
-                    
-                    <Tooltip content={<CustomTooltip />} cursor={{ stroke: '#6366f1', strokeWidth: 1, strokeDasharray: '3 3' }}/>
-                    <Legend verticalAlign="top" wrapperStyle={{paddingBottom: '20px', paddingTop: '5px'}}/>
-                    
-                    {hasHeartRateData && (
-                        <>
-                            <ReferenceLine yAxisId="left" y={session.avg_heart_rate} label={{ value: `Avg: ${session.avg_heart_rate}`, position: 'right', fill: '#f59e0b' }} stroke="#f59e0b" strokeDasharray="4 4" />
-                            <ReferenceLine yAxisId="left" y={session.max_heart_rate} label={{ value: `Max: ${session.max_heart_rate}`, position: 'right', fill: '#ef4444' }} stroke="#ef4444" strokeDasharray="4 4" />
-                        </>
-                    )}
-                    
-                    {chartableParams.map(param => visibleParams.has(param.key) && (<Line key={param.key} yAxisId="right" type="monotone" dataKey={param.key} name={param.label} stroke={param.color} dot={false} strokeWidth={1.5} connectNulls />))}
-                    
-                    {/* MODIFIED: The 'dot' prop calls our updated renderDynamicDot function */}
-                    <Line yAxisId="left" type="monotone" dataKey="heart_rate" name="Heart Rate" stroke="#dc2626" strokeWidth={2.5} dot={renderDynamicDot} activeDot={{ r: 8 }} connectNulls zIndex={100} />
-                    
-                    <Brush dataKey="elapsed_time" height={35} stroke="#6366f1" onChange={onBrushChange} tickFormatter={formatDuration} startIndex={activeDomain?.startIndex} endIndex={activeDomain?.endIndex} alwaysShowText={true} y={chartHeight - 45}>
-                        <LineChart><Line type="monotone" dataKey="heart_rate" stroke="#dc2626" dot={false} connectNulls /></LineChart>
-                    </Brush>
-                </LineChart>
-            </ResponsiveContainer>
+            <div className="mb-6">
+                <p className="text-sm font-medium text-slate-600 mb-3">Add parameters to chart:</p>
+                <div className="flex flex-wrap items-center gap-2">
+                    {chartableParams.map(param => (
+                        <button key={param.key} onClick={() => toggleParam(param.key)} className={`px-3 py-1.5 text-xs font-semibold rounded-full transition-all duration-200 border ${visibleParams.has(param.key) ? 'text-white border-transparent' : 'text-slate-700 bg-white border-slate-300 hover:bg-slate-50 hover:border-slate-400'}`} style={visibleParams.has(param.key) ? { backgroundColor: param.color } : {}}>
+                            {param.label}
+                        </button>
+                    ))}
+                </div>
+            </div>
+
+            <div className="mb-4">
+                <div className="flex flex-wrap justify-between items-center mb-2 gap-4">
+                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Anomaly Overview</p>
+
+                    <div className="flex flex-wrap items-center gap-4">
+                        {/* Checkbox to toggle manual labels */}
+                        <label className="flex items-center text-sm font-medium text-slate-700">
+                            <input
+                                type="checkbox"
+                                className="h-4 w-4 rounded border-gray-300 text-red-600 focus:ring-red-500"
+                                checked={showManualAnomalies}
+                                onChange={(e) => setShowManualAnomalies(e.target.checked)}
+                            />
+                            <span className="ml-2">Show Manual Labels</span>
+                        </label>
+
+                        {/* Checkbox to toggle ML predictions */}
+                        <label className="flex items-center text-sm font-medium text-slate-700">
+                            <input
+                                type="checkbox"
+                                className="h-4 w-4 rounded border-gray-300 text-purple-600 focus:ring-purple-500"
+                                checked={showMlAnomalies}
+                                onChange={(e) => setShowMlAnomalies(e.target.checked)}
+                            />
+                            <span className="ml-2">Show ML Predictions</span>
+                        </label>
+
+                        {/* This is now just for ML Predictions */}
+                        <div className="flex items-center gap-2">
+                            <label htmlFor="anomaly-source" className="text-sm font-medium text-slate-700">ML Prediction:</label>
+                            <select
+                                id="anomaly-source"
+                                value={selectedAnomalyKey}
+                                onChange={(e) => setSelectedAnomalyKey(e.target.value)}
+                                className="block w-full max-w-xs rounded-md border-gray-300 shadow-sm text-sm focus:ring-sky-500 focus:border-sky-500"
+                            >
+                                {anomalySources.map(source => (
+                                    <option key={source.key} value={source.key}>{source.label}</option>
+                                ))}
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <AnomalyTimeline
+                    data={chartData}
+                    onSegmentClick={onTimelineZoom}
+                    selectedAnomalyKey={selectedAnomalyKey}
+                    showManualAnomalies={showManualAnomalies}
+                    showMlAnomalies={showMlAnomalies}
+                />
+            </div>
+
+            <div style={{ width: '100%', height: chartHeight }} className="relative">
+                {!hasHeartRateData && (<div className="absolute inset-0 flex items-center justify-center bg-slate-50/70 z-10 rounded-md"><p className="text-slate-500 font-medium text-lg">Heart Rate data not available.</p></div>)}
+                <ResponsiveContainer key={brushKey}>
+                    <LineChart
+                        data={chartData}
+                        margin={chartMargin}
+                        onClick={handleChartClick}
+                        style={{ cursor: 'pointer' }}
+                    >
+                        <CartesianGrid strokeDasharray="3 3" stroke={isMounted ? "#e2e8f0" : "transparent"} />
+                        <XAxis dataKey="elapsed_time" tickFormatter={formatDuration} label={{ value: "Elapsed Time", position: "insideBottom", offset: -50, dy: 10, fill: '#475569' }} type="number" domain={xAxisDomain} allowDataOverflow tick={{ fill: '#64748b' }} axisLine={{ stroke: '#cbd5e1' }} tickLine={{ stroke: '#cbd5e1' }} />
+                        <YAxis yAxisId="left" stroke="#dc2626" label={{ value: 'Heart Rate (bpm)', angle: -90, position: 'insideLeft', offset: -10, style: { textAnchor: 'middle', fill: '#dc2626' } }} domain={hrDomain} allowDataOverflow tick={{ fill: '#dc2626' }} axisLine={{ stroke: '#fca5a5' }} tickLine={{ stroke: '#fca5a5' }} />
+                        {visibleParams.size > 0 && <YAxis yAxisId="right" orientation="right" stroke="#6366f1" tick={{ fill: '#6366f1' }} axisLine={{ stroke: '#a5b4fc' }} tickLine={{ stroke: '#a5b4fc' }} />}
+
+                        <Tooltip content={<CustomTooltip />} cursor={{ stroke: '#6366f1', strokeWidth: 1, strokeDasharray: '3 3' }} />
+                        <Legend verticalAlign="top" wrapperStyle={{ paddingBottom: '20px', paddingTop: '5px' }} />
+
+                        {hasHeartRateData && (
+                            <>
+                                <ReferenceLine yAxisId="left" y={session.avg_heart_rate} label={{ value: `Avg: ${session.avg_heart_rate}`, position: 'right', fill: '#f59e0b' }} stroke="#f59e0b" strokeDasharray="4 4" />
+                                <ReferenceLine yAxisId="left" y={session.max_heart_rate} label={{ value: `Max: ${session.max_heart_rate}`, position: 'right', fill: '#ef4444' }} stroke="#ef4444" strokeDasharray="4 4" />
+                            </>
+                        )}
+
+                        {chartableParams.map(param => visibleParams.has(param.key) && (<Line key={param.key} yAxisId="right" type="monotone" dataKey={param.key} name={param.label} stroke={param.color} dot={false} strokeWidth={1.5} connectNulls />))}
+
+                        {/* This <Line> component now calls the new renderDynamicDot function */}
+                        <Line yAxisId="left" type="monotone" dataKey="heart_rate" name="Heart Rate" stroke="#dc2626" strokeWidth={2.5} dot={renderDynamicDot} activeDot={{ r: 8 }} connectNulls zIndex={100} />
+
+                        <Brush dataKey="elapsed_time" height={35} stroke="#6366f1" onChange={onBrushChange} tickFormatter={formatDuration} startIndex={activeDomain?.startIndex} endIndex={activeDomain?.endIndex} alwaysShowText={true} y={chartHeight - 45}>
+                            <LineChart><Line type="monotone" dataKey="heart_rate" stroke="#dc2626" dot={false} connectNulls /></LineChart>
+                        </Brush>
+                    </LineChart>
+                </ResponsiveContainer>
+            </div>
         </div>
-    </div>
-  );
+    );
 };
 
 const TimeInput = ({ totalSeconds, onChange, maxSeconds }) => {
